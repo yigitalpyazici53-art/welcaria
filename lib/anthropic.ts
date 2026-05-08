@@ -16,7 +16,7 @@ export async function generateSmsReply(
   customerMessage: string,
   state: ConversationState
 ): Promise<string> {
-  console.log("[Claude] Generating reply for:", customerMessage);
+  console.log("[Reply] generating (Claude)");
 
   // Include recent conversation history for multi-turn context (last 6 turns)
   const messages: Anthropic.Messages.MessageParam[] = [
@@ -43,6 +43,6 @@ export async function generateSmsReply(
   // sendSms() will sanitize again, which is a no-op on already-clean text.
   const clean = sanitizeSmsText(raw);
 
-  console.log("[Claude] Reply:", clean);
+  console.log("[Reply] generated (Claude):", clean);
   return clean;
 }

@@ -13,10 +13,10 @@ function getClient() {
 
 export async function sendSms(to: string, body: string): Promise<void> {
   const clean = sanitizeSmsText(body);
-  console.log(`[SMS] Sending to ${to} (${clean.length} chars): ${clean}`);
+  console.log(`[Twilio] sending to=${to} len=${clean.length}`);
   const client = getClient();
   const msg = await client.messages.create({ from: fromNumber, to, body: clean });
-  console.log(`[Twilio] Sent. SID: ${msg.sid}`);
+  console.log(`[Twilio] sent sid=${msg.sid}`);
 }
 
 // Builds the owner alert from conversation state.
