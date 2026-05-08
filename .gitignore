@@ -1,0 +1,25 @@
+# ── Dependencies ─────────────────────────────────────────
+node_modules/
+
+# ── Next.js build output ─────────────────────────────────
+.next/
+out/
+
+# ── TypeScript script build output ───────────────────────
+.ts-scripts/
+
+# ── Environment / secrets — NEVER commit these ───────────
+.env
+.env.local
+.env.*.local
+
+# ── Vercel ───────────────────────────────────────────────
+.vercel
+
+# ── Misc ─────────────────────────────────────────────────
+*.log
+npm-debug.log*
+.DS_Store
+Usersyigitrapidflow-plumbing.env.local
+.claude/settings.local.json
+tsconfig.tsbuildinfo
