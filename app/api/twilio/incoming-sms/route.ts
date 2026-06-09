@@ -10,29 +10,23 @@ import {
   addToHistory,
   getNextStage,
 } from "@/lib/conversationState";
+import type { ConversationState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
 import { extractSlots, detectConflict } from "@/lib/slotExtractor";
 import type { ExtractedSlots } from "@/lib/slotExtractor";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
-// Safe fallback replies — never expose errors to customers
-const FALLBACK_CLAUDE = "Sorry, we had a system issue. The owner will follow up shortly.";
-const FALLBACK_STATE  = "Got it. What address should we send the plumber to?";
+const FALLBACK_CLAUDE = "Bir sistem hatası oluştu. Ekibimiz en kısa sürede sizinle iletişime geçecektir.";
+const FALLBACK_STATE  = "Bilgilerinizi aldık. Ekibimiz sizi arayarak randevuyu onaylayacaktır.";
 
-// Hardcoded safe reply for gas smell — bypasses Claude entirely (life safety)
-const GAS_REPLY = "Leave the area and call 911 if you smell gas. The owner is being notified now.";
-
-// In-memory fallback for MessageSid dedup when Redis is unavailable
 const recentSids = new Set<string>();
 const MAX_SID_CACHE = 200;
-
-const DEDUP_TTL_S = 300; // Twilio retries within seconds; 5-min window is more than enough
+const DEDUP_TTL_S = 300;
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   console.log("[Webhook] start");
 
-  // ── Env var check — log missing vars immediately so Vercel logs show the root cause ──
   {
     const missing: string[] = [];
     if (!process.env.ANTHROPIC_API_KEY)   missing.push("ANTHROPIC_API_KEY");
@@ -48,7 +42,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 1. Parse Twilio form body ────────────────────────────────────────────
-  // Keep this in its own try/catch so a malformed body returns 200 (prevents Twilio retry storm).
   let from = "";
   let to = "";
   let customerMessage = "";
@@ -83,7 +76,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (r) {
       try {
-        // SET NX EX — returns "OK" if key was new, null if already existed
         const result = await r.set(`dedup:${messageSid}`, "1", { nx: true, ex: DEDUP_TTL_S });
         isDuplicate = result === null;
       } catch (err) {
@@ -116,7 +108,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 3. Validate Twilio signature in production ───────────────────────────
-  // Separated from body-parse try/catch so a signature error is never silently swallowed.
   if (process.env.NODE_ENV === "production") {
     try {
       const authToken        = process.env.TWILIO_AUTH_TOKEN ?? "";
@@ -124,15 +115,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const configuredUrl    = process.env.WEBHOOK_URL;
       const urlForValidation = configuredUrl ?? req.url;
 
-      // Log URL used for validation (no secrets exposed)
       console.log(
         `[Webhook] sig-check url=${urlForValidation} using-configured-url=${!!configuredUrl} sig-present=${twilioSignature.length > 0}`
       );
       if (!configuredUrl) {
         console.warn(`[Webhook] WEBHOOK_URL not set — falling back to req.url=${req.url}`);
-      }
-      if (configuredUrl && configuredUrl !== req.url) {
-        console.log(`[Webhook] note: WEBHOOK_URL differs from req.url=${req.url}`);
       }
 
       const paramsObj: Record<string, string> = {};
@@ -165,7 +152,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  // ── 4. Extract slots (always — needed for gas smell check) ───────────────
+  // ── 4. Extract slots ─────────────────────────────────────────────────────
   let extracted: ExtractedSlots = {};
   try {
     extracted = extractSlots(customerMessage);
@@ -177,64 +164,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // ── 5. Gas smell — life-safety bypass (hardcoded safe reply, no Claude) ──
-  if (extracted.issue_type === "gas_smell") {
-    console.log("[Webhook] Gas smell detected — using safe reply, bypassing Claude");
-
-    try {
-      await updateState(from, { issue_type: "gas_smell", urgency: "high" });
-    } catch (err) {
-      console.error(
-        "[Webhook ERROR] State update failed (gas smell):",
-        err instanceof Error ? err.message : "unknown"
-      );
-    }
-
-    await addToHistory(from, "user", customerMessage);
-    await addToHistory(from, "assistant", GAS_REPLY);
-
-    const gasClean = sanitizeSmsText(GAS_REPLY);
-    console.log(`[SMS final] ${gasClean.length} chars: ${gasClean}`);
-
-    console.log(`[Twilio] sending customer SMS to=${from}`);
-    try {
-      await sendSms(from, GAS_REPLY);
-      console.log(`[Twilio] customer SMS sent`);
-    } catch (err) {
-      console.error(
-        "[Webhook ERROR] Failed to send gas smell reply:",
-        err instanceof Error ? err.message : "unknown"
-      );
-    }
-
-    try {
-      const gasState = await getState(from);
-      console.log("[OwnerAlert] sending (gas smell)");
-      await notifyOwner(from, gasState);
-      console.log("[OwnerAlert] sent");
-    } catch (err) {
-      console.error(
-        "[Webhook ERROR] Failed to notify owner (gas smell):",
-        err instanceof Error ? err.message : "unknown"
-      );
-    }
-
-    console.log("[Webhook] done (gas smell path)");
-    return new NextResponse(EMPTY_TWIML, {
-      status: 200,
-      headers: { "Content-Type": "text/xml" },
-    });
-  }
-
-  // ── 6. Load state — check first-message BEFORE adding to history ─────────
+  // ── 5. Load state ────────────────────────────────────────────────────────
   let state = await getState(from);
   console.log(`[State] loaded stage=${state.stage} history-len=${state.history.length}`);
 
-  // With Redis-backed history, history.length === 0 reliably means a brand-new conversation
   const isFirstMessage = state.history.length === 0;
 
   let conflictQuestion: string | null = null;
-
   try {
     conflictQuestion = detectConflict(state, extracted);
     console.log(
@@ -247,16 +183,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // ── 7. Build AI reply ────────────────────────────────────────────────────
+  // ── 6. Build AI reply ────────────────────────────────────────────────────
   let aiReply: string = FALLBACK_STATE;
 
   if (conflictQuestion) {
     aiReply = conflictQuestion;
     console.log("[Reply] using conflict clarification (no Claude call)");
   } else {
-    // Merge extracted slots and recalculate stage
     try {
-      state = await updateState(from, extracted);
+      state = await updateState(from, extracted as Partial<ConversationState>);
       state = await updateState(from, { stage: getNextStage(state) });
       await addToHistory(from, "user", customerMessage);
     } catch (err) {
@@ -266,7 +201,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Generate Claude reply
     console.log("[Reply] generating");
     try {
       aiReply = await generateSmsReply(customerMessage, state);
@@ -286,7 +220,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const finalReply = sanitizeSmsText(aiReply);
   console.log(`[SMS final] ${finalReply.length} chars: ${finalReply}`);
 
-  // ── 8. Send reply to customer ────────────────────────────────────────────
+  // ── 7. Send reply to customer ────────────────────────────────────────────
   console.log(`[Twilio] sending customer SMS to=${from}`);
   try {
     await sendSms(from, aiReply);
@@ -298,7 +232,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // ── 9. Notify owner — guard against spam on repeated messages ───────────
+  // ── 8. Notify owner — guard against spam on repeated messages ───────────
   state = await getState(from);
 
   const isFirstHighUrgency = state.urgency === "high" && !state.ownerAlertedHighUrgency;
@@ -311,7 +245,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       await notifyOwner(from, state);
       console.log("[OwnerAlert] sent");
 
-      const alertUpdates: Partial<typeof state> = {};
+      const alertUpdates: Partial<ConversationState> = {};
       if (isFirstHighUrgency) alertUpdates.ownerAlertedHighUrgency = true;
       if (isFirstComplete)    alertUpdates.ownerAlertedComplete    = true;
       if (Object.keys(alertUpdates).length > 0) await updateState(from, alertUpdates);
@@ -325,15 +259,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.log("[OwnerAlert] skipped");
   }
 
-  // ── 10. Log to Google Sheets — fire-and-forget, never block the response ──
+  // ── 9. Log to Google Sheets — fire-and-forget ────────────────────────────
   logToSheet({
-    timestamp: new Date().toISOString(),
-    messageSid,
-    from,
-    to,
-    customerMessage,
-    aiReply: finalReply,
-    ownerNotified: shouldNotify,
+    createdAt: new Date().toISOString(),
+    source: state.source ?? "sms",
+    name: state.name ?? "",
+    phone: from,
+    service: state.service ?? "",
+    preferredDate: state.preferredDate ?? "",
+    preferredTime: state.preferredTime ?? "",
+    location: state.location ?? "",
+    urgency: state.urgency ?? "",
+    leadScore: state.leadScore ?? "",
+    intent: "",
+    notes: state.notes ?? "",
+    conversationSummary: customerMessage.slice(0, 100),
+    status: state.stage === "complete" ? "complete" : "in_progress",
   }).catch((err) => {
     console.error(
       "[Webhook ERROR] Sheets log failed:",
@@ -341,7 +282,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   });
 
-  // ── 11. Return empty TwiML — reply already sent programmatically ─────────
+  // ── 10. Return empty TwiML ───────────────────────────────────────────────
   console.log("[Webhook] done");
   return new NextResponse(EMPTY_TWIML, {
     status: 200,

@@ -1,71 +1,105 @@
-import type { IssueType, Fixture, UrgencyLevel, ConversationState } from "./conversationState";
+import type { ConversationState, UrgencyLevel, LeadScore } from "./conversationState";
 
 export interface ExtractedSlots {
-  issue_type?: IssueType;
-  fixture?: Fixture;
+  name?: string;
+  phone?: string;
+  service?: string;
+  preferredDate?: string;
+  preferredTime?: string;
+  location?: string;
   urgency?: UrgencyLevel;
-  preferred_time?: string;
-  address?: string;
+  source?: string;
+  notes?: string;
+  leadScore?: LeadScore;
 }
 
-// Order matters: most specific patterns first
-const ISSUE_PATTERNS: Array<[RegExp, IssueType]> = [
-  // Emergency-specific — must come before generic "burst" or "leak"
-  [/\b(pipe\s+burst|burst\s+pipe|pipes?\s+bursting)\b/i, "pipe_burst"],
-  [/\b(gas\s*(smell|leak|odor)|smell\s*(of\s*)?gas|smells?\s+like\s+gas|propane\s+leak)\b/i, "gas_smell"],
-  [/\b(sewer|sewage|septic)\b/i, "sewer"],
-  [/\b(water\s+heater|hot\s+water\s+heater|no\s+hot\s+water|water\s+tank)\b/i, "water_heater"],
-  [/\b(clog|clogged|clogs|blocked|backing\s+up|backed\s+up|slow\s+drain)\b/i, "clog"],
-  [/\b(leak|leaking|leaks|drip|dripping|drips|burst|bursting|flood|flooding)\b/i, "leak"],
-];
+// Turkish mobile number: starts with 05xx or +905xx
+const PHONE_PATTERN =
+  /(?:\+90|0)[\s\-]?(?:5\d{2})[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}/;
 
-// More specific compound patterns before generic single words
-const FIXTURE_PATTERNS: Array<[RegExp, Fixture]> = [
-  [/\b(kitchen\s+sink|bathroom\s+sink|kitchen\s+faucet|bathroom\s+faucet)\b/i, "sink"],
-  [/\b(toilet|commode)\b/i, "toilet"],
-  [/\b(shower|bathtub|bath\s+tub|tub)\b/i, "shower"],
-  [/\b(pipe|pipes|pipeline)\b/i, "pipe"],
-  [/\b(drain)\b/i, "drain"],
-  [/\b(sink|faucet)\b/i, "sink"],
-];
-
-const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
-  [/\b(emergency|urgent|asap|immediately|right\s+now|flood|flooding|burst|no\s+water|water\s+everywhere|pipe\s+burst|burst\s+pipe|gas\s+smell|gas\s+leak)\b/i, "high"],
-  [/\b(today|as\s+soon\s+as\s+possible|soon)\b/i, "medium"],
-  [/\b(tomorrow|next\s+week|whenever|no\s+rush)\b/i, "low"],
+// Turkish day and date patterns — order matters: specific before generic
+const DATE_PATTERNS: RegExp[] = [
+  /\b\d{1,2}[\/\-\.]\d{1,2}(?:[\/\-\.]\d{2,4})?\b/,
+  /\b\d{1,2}\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\b/i,
+  /\b(bugün|bu gün|yarın|öbür gün|öbürgün)\b/i,
+  /\b(pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\b/i,
+  /\bbu hafta\b/i,
 ];
 
 const TIME_PATTERNS: RegExp[] = [
-  // Combined date + clock time — must come before plain day/time patterns to capture full phrase
-  /\b(today|tonight)\s*(?:at\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i,
-  /\btomorrow\s*(?:at\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i,
-  /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\s+(?:tomorrow|today)\b/i,
-  /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:at\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i,
-  // Plain fallbacks
-  /\b(today|tonight|this\s+(?:morning|afternoon|evening))\b/i,
-  /\btomorrow(?:\s+(?:morning|afternoon|evening))?\b/i,
-  /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening))?\b/i,
-  /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i,
-  /\b(?:morning|afternoon|evening|night)\b/i,
-  /\bnext\s+week\b/i,
+  /\b\d{1,2}:\d{2}\b/,
+  /\b(?:saat\s*)?\d{1,2}(?:[.,]\d{2})?\s*(?:de|da|'de|'da|te|ta)?\b/i,
+  // No \b around Turkish chars (ö, ğ not in \w): reorder longer before shorter to avoid partial match
+  /(sabah erken|öğleden sonra|öğle|akşam üstü|akşam|gece yarısı|gece)/i,
+  /(sabah|öğleden sonra|öğle|akşam)/i,
 ];
 
-const ADDRESS_PATTERN =
-  /\b\d{2,5}\s+[A-Za-z0-9]+(\s+[A-Za-z0-9]+)*\s+(st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|ln|lane|way|ct|court|pkwy|parkway)\b/i;
+const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
+  [/\b(acil|ivedi|acele|hemen|şimdi|derhal|bugün mutlaka|bekleyemem)\b/i, "high"],
+  [/\b(bu hafta|yakında|kısa sürede|en kısa sürede|mümkün olan en kısa)\b/i, "medium"],
+  [/\b(acele değil|acele yok|uygun olduğunda|ne zaman uygunsa|fırsat buldukça)\b/i, "low"],
+];
+
+// Common Turkish service business offerings
+const SERVICE_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(saç kesim|saç boyama|saç bakım|saç şekillendirme|hairstyle|haircut)\b/i, "saç bakımı"],
+  [/\b(manikür|manicure|oje|tırnak)\b/i, "manikür"],
+  [/\b(pedikür|pedicure)\b/i, "pedikür"],
+  [/\b(kalıcı oje|kalıcı manikür|gel manikür)\b/i, "kalıcı manikür"],
+  [/\b(kirpik lifting|kirpik lamine|kirpik boya|lash lift|lash)\b/i, "kirpik bakımı"],
+  [/\b(kaş tasarım|kaş aldırma|kaş laminasyon|brow|kaş)\b/i, "kaş tasarımı"],
+  [/\b(cilt bakım|yüz bakım|yüz maskesi|facial)\b/i, "cilt bakımı"],
+  [/\b(botox|botoks|dolgu|filler|lip filler|dudak dolgu)\b/i, "estetik uygulama"],
+  [/\b(lazer epilasyon|epilasyon|lazer)\b/i, "lazer epilasyon"],
+  [/\b(masaj|massage|terapi)\b/i, "masaj"],
+  // "diş" ends in ş (non-\w) so trailing \b fails — use (?!\w) lookahead instead
+  [/\b(diş\s+(?:beyazlatma|kaplama)|veneer|zirkonyum|implant|\bdiş(?!\w))/i, "diş tedavisi"],
+  [/\b(oto detay|araç yıkama|araç detay|araç bakım|car detail|car wash)\b/i, "oto detay"],
+  [/\b(sakal|tıraş|erkek bakım|barber)\b/i, "erkek bakımı"],
+  [/\b(wax|ağda)\b/i, "ağda"],
+];
+
+// Looks for explicit name introductions
+const NAME_PATTERNS: RegExp[] = [
+  /\b(?:ben|benim adım|ismim|adım)\s+([A-ZÇĞİÖŞÜa-zçğışöüI]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöüI]{2,})?)\b/i,
+  /^([A-ZÇĞİÖŞÜ][a-zçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğışöü]{1,})?)\s+(?:olarak|aradım|yazıyorum|merhaba)\b/,
+];
+
+function calculateLeadScore(slots: ExtractedSlots): LeadScore {
+  const hasDateTime = !!(slots.preferredDate || slots.preferredTime);
+  const hasService = !!slots.service;
+  const isUrgent = slots.urgency === "high";
+
+  if ((hasService && hasDateTime) || isUrgent) return "hot";
+  if (hasService || hasDateTime) return "warm";
+  return "cold";
+}
 
 export function extractSlots(message: string): ExtractedSlots {
   const result: ExtractedSlots = {};
 
-  for (const [pattern, type] of ISSUE_PATTERNS) {
+  const phoneMatch = message.match(PHONE_PATTERN);
+  if (phoneMatch) result.phone = phoneMatch[0].replace(/[\s\-]/g, "");
+
+  for (const [pattern, service] of SERVICE_PATTERNS) {
     if (pattern.test(message)) {
-      result.issue_type = type;
+      result.service = service;
       break;
     }
   }
 
-  for (const [pattern, fixture] of FIXTURE_PATTERNS) {
-    if (pattern.test(message)) {
-      result.fixture = fixture;
+  for (const pattern of DATE_PATTERNS) {
+    const match = message.match(pattern);
+    if (match) {
+      result.preferredDate = match[0].toLowerCase().trim();
+      break;
+    }
+  }
+
+  for (const pattern of TIME_PATTERNS) {
+    const match = message.match(pattern);
+    if (match) {
+      result.preferredTime = match[0].toLowerCase().trim();
       break;
     }
   }
@@ -77,60 +111,25 @@ export function extractSlots(message: string): ExtractedSlots {
     }
   }
 
-  // Implicit slots for special emergency types — override/supplement pattern results
-  if (result.issue_type === "pipe_burst") {
-    result.urgency = "high"; // pipe burst is always HIGH regardless of other signals
-    if (!result.fixture) result.fixture = "pipe";
-  } else if (result.issue_type === "gas_smell") {
-    result.urgency = "high"; // gas smell is always HIGH
-  }
-
-  for (const pattern of TIME_PATTERNS) {
+  for (const pattern of NAME_PATTERNS) {
     const match = message.match(pattern);
-    if (match) {
-      result.preferred_time = match[0].toLowerCase().trim();
+    if (match?.[1]) {
+      result.name = match[1].trim();
       break;
     }
   }
 
-  const addrMatch = message.match(ADDRESS_PATTERN);
-  if (addrMatch) {
-    result.address = addrMatch[0];
-  }
+  result.leadScore = calculateLeadScore(result);
 
   return result;
 }
 
-// Human-readable verb/phrase for each issue type — used in conflict questions
-const ISSUE_VERB: Record<IssueType, string> = {
-  leak:         "leaking",
-  clog:         "clogged",
-  water_heater: "water heater issue",
-  sewer:        "sewer problem",
-  pipe_burst:   "pipe burst",
-  gas_smell:    "gas smell",
-  other:        "something else",
-};
-
-// Returns a clarification question string if new info conflicts with known state.
 export function detectConflict(
   state: ConversationState,
   extracted: ExtractedSlots
 ): string | null {
-  if (
-    state.issue_type &&
-    extracted.issue_type &&
-    state.issue_type !== extracted.issue_type
-  ) {
-    const existingVerb = ISSUE_VERB[state.issue_type] ?? state.issue_type;
-    const incomingVerb = ISSUE_VERB[extracted.issue_type] ?? extracted.issue_type;
-
-    // pipe_burst and gas_smell labels are self-contained — no fixture prefix needed
-    const needsFixture =
-      state.issue_type !== "pipe_burst" && state.issue_type !== "gas_smell";
-    const prefix = needsFixture ? `${state.fixture ?? "issue"} ` : "";
-
-    return `Just to confirm - is the ${prefix}${existingVerb} or ${incomingVerb}?`;
+  if (state.service && extracted.service && state.service !== extracted.service) {
+    return `Daha önce ${state.service} hakkında konuşmuştuk. ${extracted.service} mi yoksa ${state.service} için mi randevu almak istiyorsunuz?`;
   }
   return null;
 }
