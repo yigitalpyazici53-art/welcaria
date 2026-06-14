@@ -7,6 +7,9 @@ import {
   getNextStage,
   getStateStorageMode,
   hasRedisConfig,
+  getConversationKey,
+  readConversationState,
+  writeConversationState,
 } from "@/lib/conversationState";
 import type { ConversationState } from "@/lib/conversationState";
 import { extractSlots, detectConflict, calculateLeadScoreFromState } from "@/lib/slotExtractor";
@@ -55,14 +58,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 2. Normalize / sanitize ──────────────────────────────────────────────
   const input = sanitizeSmsText(rawInput);
 
-  // ── 3. Load state before ─────────────────────────────────────────────────
+  // ── 3. Storage mode ──────────────────────────────────────────────────────
+  const stateStorage = getStateStorageMode();
+  const redisConfigured = hasRedisConfig();
+  const stateKey = getConversationKey(from);
+
+  // ── 4. Redis diagnostics: read BEFORE main flow ──────────────────────────
+  let diagReadBeforeFound = false;
+  let diagWriteAttempted = false;
+  let diagWriteSucceeded = false;
+  let diagReadAfterFound = false;
+  let diagReadAfterService: string | null = null;
+  let diagRedisError: string | null = null;
+
+  if (redisConfigured) {
+    try {
+      const preState = await readConversationState(from);
+      diagReadBeforeFound = preState !== null;
+    } catch (err) {
+      diagRedisError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // ── 5. Load state before ─────────────────────────────────────────────────
   const stateBefore = await getState(from);
   const isFirstMessage = stateBefore.history.length === 0;
 
-  // ── 4. Classify intent ───────────────────────────────────────────────────
+  // ── 6. Classify intent ───────────────────────────────────────────────────
   const intentResult = classifyIntent(input, isFirstMessage);
 
-  // ── 5. Extract slots ─────────────────────────────────────────────────────
+  // ── 7. Extract slots ─────────────────────────────────────────────────────
   let extractedSlots: ExtractedSlots = {};
   try {
     extractedSlots = extractSlots(input);
@@ -70,24 +95,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.error("[TestInbound] Slot extraction failed:", err instanceof Error ? err.message : err);
   }
 
-  // ── 6. Detect service conflict ───────────────────────────────────────────
+  // ── 8. Detect service conflict ───────────────────────────────────────────
   const conflictQuestion = detectConflict(stateBefore, extractedSlots);
 
-  // ── 7. Build reply (mirrors incoming-sms logic) ──────────────────────────
+  // ── 9. Build reply (mirrors incoming-sms logic) ──────────────────────────
   let assistantReply = "";
 
   if (conflictQuestion) {
-    // Conflict: return clarification; skip state update and user history entry.
     assistantReply = sanitizeSmsText(conflictQuestion);
     console.log("[TestInbound] conflict clarification — no state update");
   } else {
-    // Update state, recalculate leadScore from full accumulated state, then advance stage
     let stateUpdated = await updateState(from, extractedSlots as Partial<ConversationState>);
     const recalcScore = calculateLeadScoreFromState(stateUpdated);
     stateUpdated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(stateUpdated) });
     await addToHistory(from, "user", input);
 
-    // Generate reply
     if (process.env.ANTHROPIC_API_KEY) {
       try {
         assistantReply = await generateSmsReply(input, stateUpdated);
@@ -104,34 +126,45 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Always record assistant reply in history (mirrors incoming-sms)
   await addToHistory(from, "assistant", assistantReply);
 
-  // ── 8. Reload final state ────────────────────────────────────────────────
+  // ── 10. Reload final state ───────────────────────────────────────────────
   const stateAfter = await getState(from);
 
-  // ── 9. Owner alert preview — do NOT send SMS ─────────────────────────────
+  // ── 11. Redis diagnostics: write + read AFTER to verify persistence ──────
+  if (redisConfigured) {
+    diagWriteAttempted = true;
+    try {
+      await writeConversationState(from, stateAfter);
+      diagWriteSucceeded = true;
+      const postState = await readConversationState(from);
+      diagReadAfterFound = postState !== null;
+      diagReadAfterService = postState?.service ?? null;
+    } catch (err) {
+      if (!diagRedisError) {
+        diagRedisError = err instanceof Error ? err.message : String(err);
+      }
+    }
+  }
+
+  // ── 12. Owner alert preview — do NOT send SMS ────────────────────────────
   const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
   const isFirstComplete = stateAfter.stage === "complete" && !stateAfter.ownerAlertedComplete;
   const isHotLead = stateAfter.leadScore === "hot";
   const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
   const ownerAlertPreview = wouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
 
-  // ── 10. Sheet log preview — do NOT write to sheet ────────────────────────
+  // ── 13. Sheet log preview — do NOT write to sheet ────────────────────────
   const wouldLogToSheet = !!(
     process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
     process.env.GOOGLE_PRIVATE_KEY &&
     process.env.GOOGLE_SHEET_ID
   );
 
-  // ── 11. State storage diagnostics ─────────────────────────────────────────
-  const stateStorage = getStateStorageMode();
-  const redisConfigured = hasRedisConfig();
   const statePersistenceWarning =
     stateStorage === "memory"
       ? "Redis is not configured; state will not persist reliably on serverless."
       : null;
-  const stateKey = `conv:${from}`;
 
   if (stateStorage === "memory") {
     console.warn(
@@ -140,7 +173,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   console.log(
-    `[TestInbound] done from=${from} intent=${intentResult.category} stage=${stateAfter.stage} stateStorage=${stateStorage}`
+    `[TestInbound] done from=${from} intent=${intentResult.category} stage=${stateAfter.stage} stateStorage=${stateStorage} diagWriteSucceeded=${diagWriteSucceeded}`
   );
 
   return NextResponse.json({
@@ -160,5 +193,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     statePersistenceWarning,
     redisConfigured,
     stateKey,
+    stateDebug: {
+      stateKey,
+      storageMode: stateStorage,
+      redisConfigured,
+      readBeforeFound: diagReadBeforeFound,
+      writeAttempted: diagWriteAttempted,
+      writeSucceeded: diagWriteSucceeded,
+      readAfterFound: diagReadAfterFound,
+      readAfterService: diagReadAfterService,
+      redisError: diagRedisError,
+    },
   });
 }

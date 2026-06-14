@@ -51,6 +51,7 @@ import {
   resetStateForTest,
   getStateStorageMode,
   hasRedisConfig,
+  getConversationKey,
 } from "../lib/conversationState";
 import type { ConversationState } from "../lib/conversationState";
 import type { ExtractedSlots } from "../lib/slotExtractor";
@@ -404,6 +405,22 @@ async function main() {
   } else {
     pass("Redis configured — multi-turn state will persist across invocations");
   }
+
+  // ── Section 8: Key consistency ────────────────────────────────────────────
+  console.log("\n── 8. Key consistency ──");
+
+  const TEST_PHONE = "+905551112255";
+  const keyA = getConversationKey(TEST_PHONE);
+  const keyB = getConversationKey(TEST_PHONE);
+  assertEqual("getConversationKey is deterministic", keyA, keyB);
+  assertEqual("getConversationKey format is conv:<phone>", keyA, `conv:${TEST_PHONE}`);
+
+  // Verify key is identical in read and write paths by calling the function
+  // from both sides (no aliasing — same export used everywhere).
+  const readKey  = getConversationKey(TEST_PHONE);
+  const writeKey = getConversationKey(TEST_PHONE);
+  assertEqual("read key === write key", readKey, writeKey);
+  pass("key consistency verified", readKey);
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

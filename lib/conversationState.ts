@@ -38,21 +38,60 @@ function freshState(): ConversationState {
   return { stage: "collect_name", history: [], lastUpdated: Date.now() };
 }
 
+// ── Explicit key / read / write helpers ───────────────────────────────────────
+
+export function getConversationKey(phone: string): string {
+  return `${KEY_PREFIX}${phone}`;
+}
+
+/**
+ * Direct Redis read. Returns null when key is absent; throws on network/auth error.
+ * Handles both string and pre-parsed object responses from the Upstash SDK.
+ */
+export async function readConversationState(phone: string): Promise<ConversationState | null> {
+  const r = getRedis();
+  if (!r) return null;
+  const raw = await r.get(getConversationKey(phone));
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string") return JSON.parse(raw) as ConversationState;
+  return raw as ConversationState;
+}
+
+/**
+ * Direct Redis write. Explicitly JSON.stringifies the state so the Upstash SDK
+ * receives a string (not an object), guaranteeing a single encoding layer.
+ * Throws on failure — callers decide whether to fall back to memory.
+ */
+export async function writeConversationState(
+  phone: string,
+  state: ConversationState
+): Promise<void> {
+  const r = getRedis();
+  if (!r) throw new Error("Redis not configured");
+  await r.set(getConversationKey(phone), JSON.stringify(state), { ex: STATE_TTL_S });
+}
+
+// ── Core state operations ─────────────────────────────────────────────────────
+
 export async function getState(phone: string): Promise<ConversationState> {
   const r = getRedis();
   if (r) {
     try {
-      const stored = await r.get<ConversationState>(`${KEY_PREFIX}${phone}`);
-      if (stored && Date.now() - stored.lastUpdated < STATE_TTL_MS) return stored;
-      if (stored) console.log(`[State] Expired Redis state for ${phone} — resetting`);
+      const raw = await r.get(getConversationKey(phone));
+      if (raw !== null && raw !== undefined) {
+        const stored: ConversationState =
+          typeof raw === "string" ? JSON.parse(raw) : (raw as ConversationState);
+        if (Date.now() - stored.lastUpdated < STATE_TTL_MS) return stored;
+        console.log(`[State] Expired Redis state for ${phone} — resetting`);
+      }
     } catch (err) {
       console.error("[State] Redis get failed, falling back to memory:", err instanceof Error ? err.message : err);
       const mem = memStore.get(phone);
       if (mem && Date.now() - mem.lastUpdated < STATE_TTL_MS) return mem;
     }
-    const state = freshState();
-    try { await r.set(`${KEY_PREFIX}${phone}`, state, { ex: STATE_TTL_S }); } catch {}
-    return state;
+    // No valid Redis state — return fresh state without writing so getState()
+    // is a pure read. updateState()/addToHistory() will write when needed.
+    return freshState();
   }
 
   const existing = memStore.get(phone);
@@ -78,9 +117,9 @@ export async function updateState(
   const r = getRedis();
   if (r) {
     try {
-      await r.set(`${KEY_PREFIX}${phone}`, updated, { ex: STATE_TTL_S });
+      await r.set(getConversationKey(phone), JSON.stringify(updated), { ex: STATE_TTL_S });
     } catch (err) {
-      console.error("[State] Redis set failed:", err instanceof Error ? err.message : err);
+      console.error("[State] Redis set failed, falling back to memory:", err instanceof Error ? err.message : err);
       memStore.set(phone, updated);
     }
   } else {
@@ -104,9 +143,9 @@ export async function addToHistory(
   const r = getRedis();
   if (r) {
     try {
-      await r.set(`${KEY_PREFIX}${phone}`, state, { ex: STATE_TTL_S });
+      await r.set(getConversationKey(phone), JSON.stringify(state), { ex: STATE_TTL_S });
     } catch (err) {
-      console.error("[State] Redis addToHistory failed:", err instanceof Error ? err.message : err);
+      console.error("[State] Redis addToHistory failed, falling back to memory:", err instanceof Error ? err.message : err);
       memStore.set(phone, state);
     }
   } else {
@@ -140,7 +179,7 @@ export function getStateStorageMode(): "redis" | "memory" {
 export async function resetStateForTest(phone: string): Promise<void> {
   const r = getRedis();
   if (r) {
-    try { await r.del(`${KEY_PREFIX}${phone}`); } catch {}
+    try { await r.del(getConversationKey(phone)); } catch {}
   }
   memStore.delete(phone);
 }
@@ -148,7 +187,7 @@ export async function resetStateForTest(phone: string): Promise<void> {
 export async function _setStateForTest(phone: string, state: ConversationState): Promise<void> {
   const r = getRedis();
   if (r) {
-    try { await r.set(`${KEY_PREFIX}${phone}`, state, { ex: STATE_TTL_S }); } catch {}
+    try { await r.set(getConversationKey(phone), JSON.stringify(state), { ex: STATE_TTL_S }); } catch {}
   }
   memStore.set(phone, state);
 }
