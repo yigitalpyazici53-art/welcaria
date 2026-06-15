@@ -284,20 +284,96 @@ If `stateStorage` is `"memory"`, multi-turn state will not survive across server
 
 ---
 
+## Meta WhatsApp Cloud API Integration
+
+Incoming WhatsApp messages are handled by the same RandevuFlow conversation pipeline as SMS. State is stored in Redis (Upstash) with the same 24-hour TTL, so multi-turn WhatsApp conversations persist across serverless invocations.
+
+**Webhook URL:**
+
+```
+https://randevuflow.vercel.app/api/meta/whatsapp/webhook
+```
+
+### Required env vars
+
+| Variable | Notes |
+|---|---|
+| `META_WEBHOOK_VERIFY_TOKEN` | A long random string you choose. Set it in Vercel and in Meta Developer Console → Webhook Verify Token. |
+| `META_WHATSAPP_TOKEN` | Meta Developer Console → WhatsApp → API Setup → Temporary or Permanent Token |
+| `META_WHATSAPP_PHONE_NUMBER_ID` | Meta Developer Console → WhatsApp → API Setup → Phone Number ID |
+| `META_GRAPH_API_VERSION` | Graph API version (default: `v21.0`) |
+
+> Redis (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`) is required for multi-turn WhatsApp conversations to persist state between messages.
+
+### Webhook behavior
+
+**GET `/api/meta/whatsapp/webhook`** — Meta calls this to verify the webhook:
+1. Meta sends `hub.mode=subscribe`, `hub.verify_token`, and `hub.challenge` as query params.
+2. The route compares `hub.verify_token` with `META_WEBHOOK_VERIFY_TOKEN`.
+3. If they match, returns `hub.challenge` as plain text with status 200.
+4. Otherwise returns 403.
+
+**POST `/api/meta/whatsapp/webhook`** — Meta sends incoming messages here:
+1. The route parses the WhatsApp Business Account payload.
+2. Status updates (delivery/read receipts) are acknowledged with `{ ok: true, processed: false, reason: "status_update" }` and ignored.
+3. Non-text messages return `{ ok: true, processed: false, reason: "unsupported_message" }`.
+4. Text messages are run through the shared RandevuFlow pipeline (`lib/inboundPipeline.ts`):
+   - Load Redis conversation state for the sender's phone number
+   - Classify intent, extract slots (name, service, date, time, location, phone)
+   - Generate a Claude reply (or stage-based fallback if Anthropic is unavailable)
+   - Update Redis state and history
+5. The assistant reply is sent back to the customer via the Meta Graph API.
+6. Returns `{ ok: true, processed: true, messageSent: true/false }`.
+
+### Setting up in Meta Developer Console
+
+1. Go to [developers.facebook.com](https://developers.facebook.com) → **My Apps** → create or select your app.
+2. Add the **WhatsApp** product.
+3. Under **WhatsApp → Configuration**:
+   - **Callback URL:** `https://randevuflow.vercel.app/api/meta/whatsapp/webhook`
+   - **Verify Token:** the value of `META_WEBHOOK_VERIFY_TOKEN` from your Vercel env vars
+   - Click **Verify and Save**
+4. Subscribe to the **messages** webhook field.
+5. Under **WhatsApp → API Setup**, copy:
+   - **Phone Number ID** → `META_WHATSAPP_PHONE_NUMBER_ID`
+   - **Temporary access token** (or generate a permanent system-user token) → `META_WHATSAPP_TOKEN`
+6. Add both to Vercel environment variables and redeploy.
+
+### Local test (no HTTP server required)
+
+```bash
+npm run test-whatsapp
+```
+
+Runs the full 4-turn Turkish lead conversation through the shared pipeline and verifies:
+- Slot extraction (service, date, time, name, phone, location)
+- State persists across turns (Redis or in-memory fallback)
+- `leadScore = hot` and `stage = complete` by turn 4
+- `ownerAlertPreview` contains HOT + location + service
+
+If `META_WHATSAPP_TOKEN` and `META_WHATSAPP_PHONE_NUMBER_ID` are configured, the test also sends real WhatsApp messages to the test phone numbers. Otherwise, sends are mocked (printed to console).
+
+---
+
 ## Project structure
 
 ```
 app/
-  api/twilio/
-    incoming-sms/route.ts   ← SMS webhook: slot collection, Claude reply, owner alert
-    incoming-call/route.ts  ← Voice webhook: missed-call text-back
+  api/
+    twilio/
+      incoming-sms/route.ts          ← SMS webhook: slot collection, Claude reply, owner alert
+      incoming-call/route.ts         ← Voice webhook: missed-call text-back
+    meta/whatsapp/webhook/route.ts   ← WhatsApp webhook: GET verification + POST messages
+    test/inbound/route.ts            ← Internal test endpoint (JSON, no SMS/WhatsApp sent)
   layout.tsx
   page.tsx
 lib/
   redis.ts                  ← Lazy Upstash Redis client (falls back to null if unconfigured)
   conversationState.ts      ← Async state functions backed by Redis; in-memory fallback
+  inboundPipeline.ts        ← Shared pipeline: slot extraction → Claude reply → state update
   anthropic.ts              ← Claude API integration
   twilio.ts                 ← SMS send + owner alert builder
+  metaWhatsApp.ts           ← Meta WhatsApp Cloud API message sender
   sanitize.ts               ← ASCII-only, ≤120 char enforcer
   slotExtractor.ts          ← Rule-based slot + urgency extractor
   prompt.ts                 ← Business system prompt per conversation stage
@@ -305,6 +381,8 @@ lib/
   classifyIntent.ts         ← Intent classifier
 scripts/
   test-sms.ts               ← Full test suite (unit + Claude API, no Twilio required)
+  test-inbound-endpoint.ts  ← Pipeline validation (no HTTP server required)
+  test-whatsapp-webhook.ts  ← WhatsApp pipeline test: 4-turn lead → complete
 .env.example                ← All required vars with placeholder values
 .gitignore
 ```

@@ -1,31 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sanitizeSmsText } from "@/lib/sanitize";
 import {
-  getState,
-  updateState,
-  addToHistory,
-  getNextStage,
   getStateStorageMode,
   hasRedisConfig,
   getConversationKey,
   readConversationState,
   writeConversationState,
 } from "@/lib/conversationState";
-import type { ConversationState } from "@/lib/conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState } from "@/lib/slotExtractor";
-import type { ExtractedSlots } from "@/lib/slotExtractor";
-import { classifyIntent } from "@/lib/classifyIntent";
-import { generateSmsReply } from "@/lib/anthropic";
-import { buildOwnerAlert } from "@/lib/twilio";
-
-// Stage-based deterministic Turkish fallback used when Anthropic is unavailable.
-const STAGE_FALLBACK: Record<string, string> = {
-  collect_name:     "Merhaba! Randevu talebi icin adinizi ogrenebilir miyim?",
-  collect_service:  "Hangi hizmet icin randevu almak istersiniz?",
-  collect_datetime: "Hangi gun ve saatte gelmek istersiniz?",
-  collect_location: "Hangi subemizi tercih edersiniz?",
-  complete:         "Bilgilerinizi aldik. Ekibimiz sizi arayarak onaylayacaktir.",
-};
+import { processInboundMessage } from "@/lib/inboundPipeline";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 1. Validate secret ───────────────────────────────────────────────────
@@ -55,15 +36,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Missing from or body" }, { status: 400 });
   }
 
-  // ── 2. Normalize / sanitize ──────────────────────────────────────────────
-  const input = sanitizeSmsText(rawInput);
-
-  // ── 3. Storage mode ──────────────────────────────────────────────────────
+  // ── 2. Storage mode ──────────────────────────────────────────────────────
   const stateStorage = getStateStorageMode();
   const redisConfigured = hasRedisConfig();
   const stateKey = getConversationKey(from);
 
-  // ── 4. Redis diagnostics: read BEFORE main flow ──────────────────────────
+  // ── 3. Redis diagnostics: read BEFORE main flow ──────────────────────────
   let diagReadBeforeFound = false;
   let diagWriteAttempted = false;
   let diagWriteSucceeded = false;
@@ -80,62 +58,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // ── 5. Load state before ─────────────────────────────────────────────────
-  const stateBefore = await getState(from);
-  const isFirstMessage = stateBefore.history.length === 0;
+  // ── 4. Run shared pipeline ───────────────────────────────────────────────
+  const result = await processInboundMessage({ from, body: rawInput });
 
-  // ── 6. Classify intent ───────────────────────────────────────────────────
-  const intentResult = classifyIntent(input, isFirstMessage);
-
-  // ── 7. Extract slots ─────────────────────────────────────────────────────
-  let extractedSlots: ExtractedSlots = {};
-  try {
-    extractedSlots = extractSlots(input);
-  } catch (err) {
-    console.error("[TestInbound] Slot extraction failed:", err instanceof Error ? err.message : err);
-  }
-
-  // ── 8. Detect service conflict ───────────────────────────────────────────
-  const conflictQuestion = detectConflict(stateBefore, extractedSlots);
-
-  // ── 9. Build reply (mirrors incoming-sms logic) ──────────────────────────
-  let assistantReply = "";
-
-  if (conflictQuestion) {
-    assistantReply = sanitizeSmsText(conflictQuestion);
-    console.log("[TestInbound] conflict clarification — no state update");
-  } else {
-    let stateUpdated = await updateState(from, extractedSlots as Partial<ConversationState>);
-    const recalcScore = calculateLeadScoreFromState(stateUpdated);
-    stateUpdated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(stateUpdated) });
-    await addToHistory(from, "user", input);
-
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        assistantReply = await generateSmsReply(input, stateUpdated);
-      } catch (err) {
-        console.error("[TestInbound] Anthropic failed:", err instanceof Error ? err.message : err);
-        assistantReply = sanitizeSmsText(
-          STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_name
-        );
-      }
-    } else {
-      assistantReply = sanitizeSmsText(
-        STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_name
-      );
-    }
-  }
-
-  await addToHistory(from, "assistant", assistantReply);
-
-  // ── 10. Reload final state ───────────────────────────────────────────────
-  const stateAfter = await getState(from);
-
-  // ── 11. Redis diagnostics: write + read AFTER to verify persistence ──────
+  // ── 5. Redis diagnostics: write + read AFTER to verify persistence ────────
   if (redisConfigured) {
     diagWriteAttempted = true;
     try {
-      await writeConversationState(from, stateAfter);
+      await writeConversationState(from, result.stateAfter);
       diagWriteSucceeded = true;
       const postState = await readConversationState(from);
       diagReadAfterFound = postState !== null;
@@ -146,24 +76,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     }
   }
-
-  // ── 12. Owner alert preview — do NOT send SMS ────────────────────────────
-  const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
-  const isFirstComplete = stateAfter.stage === "complete" && !stateAfter.ownerAlertedComplete;
-  const isHotLead = stateAfter.leadScore === "hot";
-  const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
-  const ownerAlertPreview = wouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
-
-  // ── 13. Sheet log preview — do NOT write to sheet ────────────────────────
-  // Reflects whether the accumulated lead data is complete enough to produce
-  // a meaningful sheet entry (env vars are a separate deployment concern).
-  const wouldLogToSheet = !!(
-    stateAfter.service &&
-    stateAfter.name &&
-    stateAfter.phone &&
-    (stateAfter.preferredDate || stateAfter.preferredTime) &&
-    stateAfter.location
-  );
 
   const statePersistenceWarning =
     stateStorage === "memory"
@@ -177,22 +89,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   console.log(
-    `[TestInbound] done from=${from} intent=${intentResult.category} stage=${stateAfter.stage} stateStorage=${stateStorage} diagWriteSucceeded=${diagWriteSucceeded}`
+    `[TestInbound] done from=${from} intent=${result.intent} stage=${result.stateAfter.stage} stateStorage=${stateStorage} diagWriteSucceeded=${diagWriteSucceeded}`
   );
 
   return NextResponse.json({
     ok: true,
     from,
-    input,
-    intent: intentResult.category,
-    extractedSlots,
-    stateBefore,
-    stateAfter,
-    nextStage: stateAfter.stage,
-    assistantReply,
-    ownerAlertPreview,
-    wouldNotifyOwner,
-    wouldLogToSheet,
+    input: result.input,
+    intent: result.intent,
+    extractedSlots: result.extractedSlots,
+    stateBefore: result.stateBefore,
+    stateAfter: result.stateAfter,
+    nextStage: result.nextStage,
+    assistantReply: result.assistantReply,
+    ownerAlertPreview: result.ownerAlertPreview,
+    wouldNotifyOwner: result.shouldNotifyOwner,
+    wouldLogToSheet: result.shouldLogToSheet,
     stateStorage,
     statePersistenceWarning,
     redisConfigured,
