@@ -184,6 +184,30 @@ export async function resetStateForTest(phone: string): Promise<void> {
   memStore.delete(phone);
 }
 
+/**
+ * Delete conversation state for both the bare and '+'-prefixed forms of a
+ * phone number (e.g. "905419473049" and "+905419473049").
+ * Clears in-memory fallback first, then Redis — throws if Redis fails.
+ * Returns the list of Redis key names that were targeted.
+ */
+export async function deleteConversationState(phone: string): Promise<string[]> {
+  const base = phone.startsWith("+") ? phone.slice(1) : phone;
+  const withPlus = `+${base}`;
+  const keys = [getConversationKey(base), getConversationKey(withPlus)];
+
+  // Always clear in-memory fallback so it is clean even if Redis throws below.
+  memStore.delete(base);
+  memStore.delete(withPlus);
+
+  const r = getRedis();
+  if (r) {
+    await r.del(keys[0]);
+    await r.del(keys[1]);
+  }
+
+  return keys;
+}
+
 export async function _setStateForTest(phone: string, state: ConversationState): Promise<void> {
   const r = getRedis();
   if (r) {

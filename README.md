@@ -234,6 +234,55 @@ npm run test-inbound
 
 ---
 
+## Resetting test conversation state
+
+When testing the same WhatsApp or SMS number repeatedly, stale Redis state can cause unexpected behavior (e.g. the bot skips earlier stages because it already collected those slots). Use this endpoint to wipe the conversation state for a specific phone number before a fresh test run.
+
+The endpoint deletes both the bare and `+`-prefixed key variants (`conv:<phone>` and `conv:+<phone>`) so it works regardless of how the number was stored.
+
+**Endpoint:** `POST /api/test/reset`
+
+**curl example (production):**
+
+```bash
+curl -X POST https://randevuflow.vercel.app/api/test/reset \
+  -H "Content-Type: application/json" \
+  -d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","from":"905419473049"}'
+```
+
+Both formats are accepted — with or without the leading `+`:
+
+```bash
+-d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","from":"+905419473049"}'
+```
+
+**Success response:**
+
+```json
+{
+  "ok": true,
+  "from": "905419473049",
+  "deletedKeys": ["conv:905419473049", "conv:+905419473049"],
+  "stateStorage": "redis"
+}
+```
+
+**Error responses:**
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or wrong secret |
+| `400` | Invalid JSON, or missing `from` field |
+| `500` | `TEST_WEBHOOK_SECRET` not set on the server, or Redis deletion failed |
+
+**Local reset test (no server required):**
+
+```bash
+npm run test-reset
+```
+
+---
+
 ## Production state persistence
 
 Vercel serverless functions are stateless — each request may land on a different instance with a fresh in-memory heap. Without Redis, multi-turn conversations lose their state between turns.
@@ -365,6 +414,7 @@ app/
       incoming-call/route.ts         ← Voice webhook: missed-call text-back
     meta/whatsapp/webhook/route.ts   ← WhatsApp webhook: GET verification + POST messages
     test/inbound/route.ts            ← Internal test endpoint (JSON, no SMS/WhatsApp sent)
+    test/reset/route.ts              ← Test-only endpoint: clear Redis state by phone number
   layout.tsx
   page.tsx
 lib/
@@ -383,6 +433,7 @@ scripts/
   test-sms.ts               ← Full test suite (unit + Claude API, no Twilio required)
   test-inbound-endpoint.ts  ← Pipeline validation (no HTTP server required)
   test-whatsapp-webhook.ts  ← WhatsApp pipeline test: 4-turn lead → complete
+  test-reset-endpoint.ts    ← Reset endpoint test: verifies state deletion + key normalization
 .env.example                ← All required vars with placeholder values
 .gitignore
 ```

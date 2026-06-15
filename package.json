@@ -10,7 +10,8 @@
     "type-check": "tsc --noEmit",
     "test-sms": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-sms.ts",
     "test-inbound": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-inbound-endpoint.ts",
-    "test-whatsapp": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-whatsapp-webhook.ts"
+    "test-whatsapp": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-whatsapp-webhook.ts",
+    "test-reset": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-reset-endpoint.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.55.0",
