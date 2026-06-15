@@ -110,6 +110,63 @@ const NAME_PATTERNS: RegExp[] = [
   /^([A-ZÇĞİÖŞÜ][a-zçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğışöü]{1,})?)\s+(?:olarak|aradım|yazıyorum|merhaba)\b/,
 ];
 
+// Words that must not be mistaken for a Turkish name in the bare-word fallback
+const NAME_BLOCKLIST = new Set([
+  // services
+  "lazer", "epilasyon", "masaj", "manikür", "pedikür", "botoks", "dolgu", "wax", "ağda",
+  // locations (lowercase)
+  "kadıköy", "ataşehir", "nişantaşı", "beşiktaş", "şişli", "fatih", "üsküdar",
+  "bakırköy", "beyoğlu", "sarıyer", "maltepe", "kartal", "pendik", "tuzla",
+  "bağcılar", "mecidiyeköy", "levent", "etiler", "bebek", "ortaköy", "bostancı",
+  "moda", "ankara", "izmir", "bursa", "antalya",
+  // days
+  "pazartesi", "salı", "çarşamba", "perşembe", "cuma", "cumartesi", "pazar",
+  // time-of-day / temporal
+  "sabah", "öğle", "öğleden", "akşam", "gece", "bugün", "yarın", "hafta",
+  // common words that could appear as a 1-2 word reply
+  "merhaba", "selam", "tamam", "evet", "hayır", "ok", "tabi", "tabii",
+  "güzel", "iyi", "kötü", "hemen", "şimdi", "bilgi", "şube", "randevu",
+  "fiyat", "hizmet", "telefon", "numara", "lütfen", "teşekkür", "teşekkürler",
+  "tüm", "vücut", "beni", "seni", "bize", "uygun", "olur", "var", "yok",
+  "için", "ile", "ve", "veya", "sonra", "önce", "kadar", "gibi", "çok",
+  "az", "biraz", "sadece", "ancak", "ama", "fakat", "hanım",
+]);
+
+// Pure Turkish/Latin letters, 1 or 2 words, no digits or punctuation
+const BARE_NAME_RE = /^[A-ZÇĞİÖŞÜa-zçğışöü]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöü]{2,})?$/;
+
+// Self-introduction prefixes already covered by NAME_PATTERNS, but strip here too for safety
+const NAME_INTRO_RE = /^(?:ben(?:\s+adım)?|benim\s+adım|ismim|adım|adı)\s+/i;
+
+function turkishTitleCase(word: string): string {
+  if (!word) return word;
+  const first = word[0];
+  const rest = word.slice(1).toLowerCase();
+  // Turkish dotted-i rule: lowercase 'i' → uppercase 'İ' (not 'I')
+  const upper = first === "i" ? "İ" : first === "ı" ? "I" : first.toUpperCase();
+  return upper + rest;
+}
+
+/**
+ * Bare-word name fallback for the collect_name stage.
+ * Call ONLY when extractSlots() found no name and current stage is collect_name
+ * (or the assistant just asked for a name).
+ * Returns a title-cased name, or undefined if the message doesn't look like a name.
+ */
+export function extractNameFallback(message: string): string | undefined {
+  const trimmed = message.trim();
+  // Strip self-introduction prefixes before testing
+  const stripped = trimmed.replace(NAME_INTRO_RE, "").trim();
+  // Consider only first 2 words
+  const words = stripped.split(/\s+/).slice(0, 2);
+  const candidate = words.join(" ");
+
+  if (!BARE_NAME_RE.test(candidate)) return undefined;
+  if (words.some((w) => NAME_BLOCKLIST.has(w.toLowerCase()))) return undefined;
+
+  return words.map(turkishTitleCase).join(" ");
+}
+
 function calculateLeadScore(slots: ExtractedSlots): LeadScore {
   const hasDateTime = !!(slots.preferredDate || slots.preferredTime);
   const hasService = !!slots.service;

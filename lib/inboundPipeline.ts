@@ -6,7 +6,7 @@ import {
   getNextStage,
 } from "./conversationState";
 import type { ConversationState } from "./conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState } from "./slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, extractNameFallback } from "./slotExtractor";
 import type { ExtractedSlots } from "./slotExtractor";
 import { classifyIntent } from "./classifyIntent";
 import { generateSmsReply } from "./anthropic";
@@ -58,6 +58,25 @@ export async function processInboundMessage(
     extractedSlots = extractSlots(input);
   } catch (err) {
     console.error("[Pipeline] Slot extraction failed:", err instanceof Error ? err.message : err);
+  }
+
+  // Stage-aware name fallback: bare Turkish names like "ayşe" or "mehmet" aren't caught
+  // by NAME_PATTERNS (which require explicit prefixes). When we're in collect_name stage
+  // or the last assistant message asked for a name, try the heuristic fallback.
+  if (!extractedSlots.name) {
+    const needFallback =
+      stateBefore.stage === "collect_name" ||
+      stateBefore.history
+        .slice(-2)
+        .some(
+          (h) =>
+            h.role === "assistant" &&
+            /isminizi|adınızı|adınız\b|adını/i.test(h.content)
+        );
+    if (needFallback) {
+      const fallback = extractNameFallback(input);
+      if (fallback) extractedSlots.name = fallback;
+    }
   }
 
   const conflictQuestion = detectConflict(stateBefore, extractedSlots);

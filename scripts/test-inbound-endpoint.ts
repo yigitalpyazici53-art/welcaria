@@ -42,7 +42,7 @@ if (!process.env.TEST_WEBHOOK_SECRET) {
 // ── Safe to import lib modules now ───────────────────────────────────────
 import { sanitizeSmsText, SMS_MAX_CHARS } from "../lib/sanitize";
 import { classifyIntent } from "../lib/classifyIntent";
-import { extractSlots, detectConflict, calculateLeadScoreFromState } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, extractNameFallback } from "../lib/slotExtractor";
 import {
   getState,
   updateState,
@@ -166,6 +166,20 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
 
   const intentResult = classifyIntent(input, isFirstMessage);
   const extractedSlots = extractSlots(input);
+
+  // Stage-aware name fallback — mirrors inboundPipeline.ts logic
+  if (!extractedSlots.name) {
+    const needFallback =
+      stateBefore.stage === "collect_name" ||
+      stateBefore.history
+        .slice(-2)
+        .some((h) => h.role === "assistant" && /isminizi|adınızı|adınız\b|adını/i.test(h.content));
+    if (needFallback) {
+      const fallback = extractNameFallback(input);
+      if (fallback) extractedSlots.name = fallback;
+    }
+  }
+
   const conflictQuestion = detectConflict(stateBefore, extractedSlots);
 
   let assistantReply = "";
@@ -474,6 +488,77 @@ async function main() {
   );
   if (mt4_wouldLog) pass("T4: wouldLogToSheet = true (lead complete)");
   else fail("T4: wouldLogToSheet = true", "lead data incomplete — missing required fields");
+
+  // ── Section 10: 6-turn regression — single-word Turkish name ────────────
+  console.log("\n── 10. Regression: 6-turn flow with bare single-word name ──");
+
+  const PHONE_6T = "+905551112402";
+  await resetStateForTest(PHONE_6T);
+
+  // T1: service inquiry
+  const r6_1 = await runPipeline(PHONE_6T, "Merhaba lazer epilasyon fiyatı alabilir miyim?");
+  console.log(`  T1 service=${r6_1.stateAfter.service ?? "(none)"} stage=${r6_1.nextStage}`);
+  assertContains("R6/T1: service = lazer epilasyon", r6_1.stateAfter.service ?? "", "lazer epilasyon");
+
+  // T2: bare single-word name (regression — was silently dropped before fix)
+  const r6_2 = await runPipeline(PHONE_6T, "ayşe");
+  console.log(`  T2 name=${r6_2.stateAfter.name ?? "(none)"} stage=${r6_2.nextStage} reply="${r6_2.assistantReply.slice(0, 60)}"`);
+  assertEqual("R6/T2: name = Ayşe", r6_2.stateAfter.name, "Ayşe");
+  assertNotContains("R6/T2: reply does not re-ask name", r6_2.assistantReply, "isminizi");
+
+  // T3: phone number
+  const r6_3 = await runPipeline(PHONE_6T, "Telefonum 0532 123 45 67");
+  console.log(`  T3 phone=${r6_3.stateAfter.phone ?? "(none)"} name=${r6_3.stateAfter.name ?? "(none)"}`);
+  assertEqual("R6/T3: phone normalized", r6_3.stateAfter.phone, "05321234567");
+  assertContains("R6/T3: name still Ayşe", r6_3.stateAfter.name ?? "", "Ayşe");
+
+  // T4: service detail — must not accidentally overwrite name
+  const r6_4 = await runPipeline(PHONE_6T, "Tüm vücut düşünüyorum");
+  console.log(`  T4 name=${r6_4.stateAfter.name ?? "(none)"} service=${r6_4.stateAfter.service ?? "(none)"}`);
+  assertContains("R6/T4: name still Ayşe", r6_4.stateAfter.name ?? "", "Ayşe");
+  assertContains("R6/T4: service preserved", r6_4.stateAfter.service ?? "", "lazer epilasyon");
+
+  // T5: date and time
+  const r6_5 = await runPipeline(PHONE_6T, "Cumartesi öğleden sonra uygun olur");
+  console.log(`  T5 date=${r6_5.stateAfter.preferredDate ?? "(none)"} time=${r6_5.stateAfter.preferredTime ?? "(none)"}`);
+  assertContains("R6/T5: preferredDate = cumartesi", r6_5.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("R6/T5: preferredTime = öğleden sonra", r6_5.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertNotContains("R6/T5: reply does not ask for phone", r6_5.assistantReply, "telefon");
+
+  // T6: location → stage must reach complete
+  const r6_6 = await runPipeline(PHONE_6T, "Kadıköy şubesi uygun olur.");
+  console.log(`  T6 location=${r6_6.stateAfter.location ?? "(none)"} stage=${r6_6.nextStage}`);
+  console.log(`     ownerAlert=${r6_6.ownerAlertPreview ?? "(null)"}`);
+  console.log(`     reply=${r6_6.assistantReply.slice(0, 80)}${r6_6.assistantReply.length > 80 ? "..." : ""}`);
+
+  assertEqual("R6/T6: name = Ayşe", r6_6.stateAfter.name, "Ayşe");
+  assertEqual("R6/T6: phone normalized", r6_6.stateAfter.phone, "05321234567");
+  assertContains("R6/T6: service = lazer epilasyon", r6_6.stateAfter.service ?? "", "lazer epilasyon");
+  assertContains("R6/T6: preferredDate = cumartesi", r6_6.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("R6/T6: preferredTime = öğleden sonra", r6_6.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertContains("R6/T6: location = Kadıköy", r6_6.stateAfter.location ?? "", "Kadıköy");
+  assertEqual("R6/T6: stage = complete", r6_6.nextStage, "complete");
+  assertEqual("R6/T6: leadScore = hot", r6_6.stateAfter.leadScore, "hot");
+  assertDefined("R6/T6: ownerAlertPreview non-null", r6_6.ownerAlertPreview);
+  if (r6_6.ownerAlertPreview) {
+    assertContains("R6/T6: ownerAlert includes Ayşe", r6_6.ownerAlertPreview, "Ayşe");
+    assertContains("R6/T6: ownerAlert includes Kadıköy", r6_6.ownerAlertPreview, "Kadıköy");
+    assertContains("R6/T6: ownerAlert includes HOT", r6_6.ownerAlertPreview, "HOT");
+    assertContains("R6/T6: ownerAlert includes lazer epilasyon", r6_6.ownerAlertPreview, "lazer epilasyon");
+  }
+  // Critical regression assertion — reply must NOT ask for name again
+  assertNotContains("R6/T6: reply does not re-ask name (regression)", r6_6.assistantReply, "isminizi öğrenebilir");
+  assertNotContains("R6/T6: reply does not ask for phone", r6_6.assistantReply, "telefon numaranız");
+  assertNotContains("R6/T6: reply does not re-ask location", r6_6.assistantReply, "şubemizi tercih");
+  const r6_wouldLog = !!(
+    r6_6.stateAfter.service &&
+    r6_6.stateAfter.name &&
+    r6_6.stateAfter.phone &&
+    (r6_6.stateAfter.preferredDate || r6_6.stateAfter.preferredTime) &&
+    r6_6.stateAfter.location
+  );
+  if (r6_wouldLog) pass("R6/T6: wouldLogToSheet = true");
+  else fail("R6/T6: wouldLogToSheet = true", "lead data incomplete");
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

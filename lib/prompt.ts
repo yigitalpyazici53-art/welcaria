@@ -33,6 +33,7 @@ const NEXT_FIELD_PROMPT: Record<Stage, string> = {
 export function buildSystemPrompt(state: ConversationState): string {
   const known: string[] = [];
   if (state.name) known.push(`isim=${state.name}`);
+  if (state.phone) known.push(`telefon=${state.phone}`);
   if (state.service) known.push(`hizmet=${state.service}`);
   if (state.preferredDate) known.push(`tarih=${state.preferredDate}`);
   if (state.preferredTime) known.push(`saat=${state.preferredTime}`);
@@ -44,9 +45,19 @@ export function buildSystemPrompt(state: ConversationState): string {
       ? `\nBilinen bilgiler: ${known.join(", ")}`
       : "\nHenüz bilgi toplanmadı.";
 
+  // Explicit guards — Claude must never re-ask for fields already in state
+  const guards: string[] = [];
+  if (state.name) guards.push(`"${state.name}" adını ASLA tekrar sorma.`);
+  if (state.phone) guards.push(`"${state.phone}" telefon numarasını ASLA tekrar sorma.`);
+  if (state.location) guards.push(`"${state.location}" konumunu ASLA tekrar sorma.`);
+  if (state.preferredDate || state.preferredTime) guards.push("Tarih/saat zaten alındı, tekrar sorma.");
+  if (state.service) guards.push(`"${state.service}" hizmet bilgisi zaten alındı, tekrar sorma.`);
+  const guardSection =
+    guards.length > 0 ? `\nKESİNLİKLE TEKRAR SORMA: ${guards.join(" ")}` : "";
+
   const nextTask = NEXT_FIELD_PROMPT[state.stage];
 
-  return `${BASE_PROMPT}${knownSection}\nSonraki adım: ${nextTask}`;
+  return `${BASE_PROMPT}${knownSection}${guardSection}\nSonraki adım: ${nextTask}`;
 }
 
 // Legacy export — keeps any remaining static import from breaking

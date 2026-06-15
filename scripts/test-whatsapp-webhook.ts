@@ -206,8 +206,97 @@ async function main() {
 
   await trySendWhatsApp(PHONE_MT, t4.assistantReply);
 
-  // ── Section 3: Ignored payload simulation ────────────────────────────────
-  console.log("\n── 3. Ignored payload handling ──");
+  // ── Section 3: Real WhatsApp-style 6-turn flow (regression: single-word name) ──
+  console.log("\n── 3. Real WhatsApp-style 6-turn flow (regression) ──");
+
+  const PHONE_6T = "905551112402";
+  await resetStateForTest(PHONE_6T);
+
+  // Turn 1: service inquiry
+  const w1 = await processInboundMessage({
+    from: PHONE_6T,
+    body: "Merhaba lazer epilasyon fiyatı alabilir miyim?",
+    source: "whatsapp",
+  });
+  console.log(`  W1 service=${w1.stateAfter.service ?? "(none)"} stage=${w1.nextStage}`);
+  assertDefined("W1: service extracted", w1.stateAfter.service);
+  assertContains("W1: service = lazer epilasyon", w1.stateAfter.service ?? "", "lazer epilasyon");
+
+  // Turn 2: single-word name (regression — was not extracted before this fix)
+  const w2 = await processInboundMessage({
+    from: PHONE_6T,
+    body: "ayşe",
+    source: "whatsapp",
+  });
+  console.log(`  W2 name=${w2.stateAfter.name ?? "(none)"} stage=${w2.nextStage} reply="${w2.assistantReply.slice(0, 60)}"`);
+  assertEqual("W2: name = Ayşe", w2.stateAfter.name, "Ayşe");
+  assertNotContains("W2: reply does not re-ask name (isminizi)", w2.assistantReply, "isminizi");
+  assertNotContains("W2: reply does not re-ask name (adınızı)", w2.assistantReply, "adınızı");
+
+  // Turn 3: phone only
+  const w3 = await processInboundMessage({
+    from: PHONE_6T,
+    body: "Telefonum 0532 123 45 67",
+    source: "whatsapp",
+  });
+  console.log(`  W3 phone=${w3.stateAfter.phone ?? "(none)"} name=${w3.stateAfter.name ?? "(none)"}`);
+  assertDefined("W3: phone captured", w3.stateAfter.phone);
+  assertEqual("W3: phone normalized", w3.stateAfter.phone, "05321234567");
+  assertContains("W3: name still Ayşe", w3.stateAfter.name ?? "", "Ayşe");
+
+  // Turn 4: service detail — must NOT overwrite name or service
+  const w4 = await processInboundMessage({
+    from: PHONE_6T,
+    body: "Tüm vücut düşünüyorum",
+    source: "whatsapp",
+  });
+  console.log(`  W4 service=${w4.stateAfter.service ?? "(none)"} name=${w4.stateAfter.name ?? "(none)"}`);
+  assertContains("W4: name still Ayşe", w4.stateAfter.name ?? "", "Ayşe");
+  assertContains("W4: service preserved", w4.stateAfter.service ?? "", "lazer epilasyon");
+
+  // Turn 5: date and time
+  const w5 = await processInboundMessage({
+    from: PHONE_6T,
+    body: "Cumartesi öğleden sonra uygun olur",
+    source: "whatsapp",
+  });
+  console.log(`  W5 date=${w5.stateAfter.preferredDate ?? "(none)"} time=${w5.stateAfter.preferredTime ?? "(none)"}`);
+  assertContains("W5: preferredDate = cumartesi", w5.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("W5: preferredTime = öğleden sonra", w5.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertNotContains("W5: reply does not ask for phone", w5.assistantReply, "telefon");
+  assertNotContains("W5: reply does not re-ask name", w5.assistantReply, "isminizi");
+
+  // Turn 6: location → stage must reach complete; reply must NOT ask for name again
+  const w6 = await processInboundMessage({
+    from: PHONE_6T,
+    body: "Kadıköy şubesi uygun olur.",
+    source: "whatsapp",
+  });
+  console.log(`  W6 location=${w6.stateAfter.location ?? "(none)"} stage=${w6.nextStage}`);
+  console.log(`     ownerAlert=${w6.ownerAlertPreview ?? "(null)"}`);
+  console.log(`     reply=${w6.assistantReply.slice(0, 100)}${w6.assistantReply.length > 100 ? "..." : ""}`);
+
+  assertEqual("W6: name = Ayşe", w6.stateAfter.name, "Ayşe");
+  assertEqual("W6: phone normalized", w6.stateAfter.phone, "05321234567");
+  assertContains("W6: service = lazer epilasyon", w6.stateAfter.service ?? "", "lazer epilasyon");
+  assertContains("W6: preferredDate = cumartesi", w6.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("W6: preferredTime = öğleden sonra", w6.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertContains("W6: location = Kadıköy", w6.stateAfter.location ?? "", "Kadıköy");
+  assertEqual("W6: stage = complete", w6.nextStage, "complete");
+  assertEqual("W6: leadScore = hot", w6.stateAfter.leadScore, "hot");
+  assertDefined("W6: ownerAlertPreview non-null", w6.ownerAlertPreview);
+  if (w6.ownerAlertPreview) {
+    assertContains("W6: ownerAlert includes Ayşe", w6.ownerAlertPreview, "Ayşe");
+    assertContains("W6: ownerAlert includes Kadıköy", w6.ownerAlertPreview, "Kadıköy");
+  }
+  // Critical regression assertions — bot must NOT ask for name/phone/location again
+  assertNotContains("W6: reply does not re-ask name (regression)", w6.assistantReply, "isminizi öğrenebilir");
+  assertNotContains("W6: reply does not ask for phone", w6.assistantReply, "telefon numaranız");
+  assertNotContains("W6: reply does not re-ask location", w6.assistantReply, "şubemizi tercih");
+  assertEqual("W6: shouldLogToSheet = true", w6.shouldLogToSheet, true);
+
+  // ── Section 4: Ignored payload simulation ────────────────────────────────
+  console.log("\n── 4. Ignored payload handling ──");
 
   // Simulate the webhook route's ignored-payload responses
   const ignoredReasons: Array<{ condition: string; reason: string }> = [
