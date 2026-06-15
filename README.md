@@ -234,6 +234,98 @@ npm run test-inbound
 
 ---
 
+## Meta WhatsApp outbound diagnostic endpoint
+
+Use this endpoint to test Meta WhatsApp outbound sending directly from the Vercel runtime. It checks the actual runtime environment variables and attempts a real send — useful for diagnosing `401 OAuthException` errors without exposing secrets.
+
+**Endpoint:** `POST /api/test/meta-send`
+
+**Required env var:**
+
+| Variable | Notes |
+|---|---|
+| `TEST_WEBHOOK_SECRET` | Same secret used by `/api/test/inbound` and `/api/test/reset`. |
+
+**Request body:**
+
+```json
+{
+  "secret": "YOUR_TEST_WEBHOOK_SECRET",
+  "to":     "905419473049",
+  "body":   "Test from RandevuFlow"
+}
+```
+
+**curl example (production):**
+
+```bash
+curl -X POST https://randevuflow.vercel.app/api/test/meta-send \
+  -H "Content-Type: application/json" \
+  -d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","to":"905419473049","body":"Test from RandevuFlow"}'
+```
+
+**Success response:**
+
+```json
+{
+  "ok": true,
+  "messageSent": true,
+  "diagnostics": {
+    "hasMetaToken": true,
+    "metaTokenLength": 217,
+    "metaTokenPrefix": "EAAGm0",
+    "metaTokenSuffix": "ZD8xYZ",
+    "hasPhoneNumberId": true,
+    "phoneNumberId": "123456789012345",
+    "graphApiVersion": "v21.0",
+    "targetUrl": "https://graph.facebook.com/v21.0/123456789012345/messages"
+  }
+}
+```
+
+**Failure response (e.g. expired token):**
+
+```json
+{
+  "ok": false,
+  "messageSent": false,
+  "diagnostics": { "...": "same fields as above" },
+  "error": {
+    "message": "Meta WhatsApp API error: 401 — Invalid OAuth access token.",
+    "status": 401,
+    "metaError": {
+      "message": "Invalid OAuth access token.",
+      "type": "OAuthException",
+      "code": 190,
+      "fbtrace_id": "Abc123..."
+    }
+  }
+}
+```
+
+**What the diagnostics show:**
+
+| Field | What to look for |
+|---|---|
+| `hasMetaToken` | Must be `true` — if `false`, the env var is missing from Vercel |
+| `metaTokenLength` | System-user tokens are typically 200+ chars; temporary tokens ~200 chars |
+| `metaTokenPrefix` / `metaTokenSuffix` | Compare against the token in Meta Developer Console to confirm it's the right one |
+| `hasPhoneNumberId` | Must be `true` |
+| `phoneNumberId` | Should match the Phone Number ID in Meta → WhatsApp → API Setup |
+| `graphApiVersion` | Defaults to `v21.0` if not set |
+| `targetUrl` | The exact URL the request is sent to |
+
+**Error responses:**
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or wrong secret |
+| `400` | Invalid JSON, or missing `to` / `body` fields |
+| `500` | `TEST_WEBHOOK_SECRET` not set on the server, or missing Meta env vars |
+| `502` | Meta API returned an error (check `error.metaError` for code and type) |
+
+---
+
 ## Resetting test conversation state
 
 When testing the same WhatsApp or SMS number repeatedly, stale Redis state can cause unexpected behavior (e.g. the bot skips earlier stages because it already collected those slots). Use this endpoint to wipe the conversation state for a specific phone number before a fresh test run.
@@ -415,6 +507,7 @@ app/
     meta/whatsapp/webhook/route.ts   ← WhatsApp webhook: GET verification + POST messages
     test/inbound/route.ts            ← Internal test endpoint (JSON, no SMS/WhatsApp sent)
     test/reset/route.ts              ← Test-only endpoint: clear Redis state by phone number
+    test/meta-send/route.ts          ← Diagnostic: test Meta outbound send + env var check
   layout.tsx
   page.tsx
 lib/
@@ -423,7 +516,7 @@ lib/
   inboundPipeline.ts        ← Shared pipeline: slot extraction → Claude reply → state update
   anthropic.ts              ← Claude API integration
   twilio.ts                 ← SMS send + owner alert builder
-  metaWhatsApp.ts           ← Meta WhatsApp Cloud API message sender
+  metaWhatsApp.ts           ← Meta WhatsApp Cloud API message sender + MetaWhatsAppError
   sanitize.ts               ← ASCII-only, ≤120 char enforcer
   slotExtractor.ts          ← Rule-based slot + urgency extractor
   prompt.ts                 ← Business system prompt per conversation stage

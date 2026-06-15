@@ -1,3 +1,23 @@
+export interface MetaApiError {
+  message: string;
+  type?: string;
+  code?: number;
+  fbtrace_id?: string;
+}
+
+export class MetaWhatsAppError extends Error {
+  status: number;
+  metaError?: MetaApiError;
+
+  constructor(status: number, metaError?: MetaApiError) {
+    const detail = metaError?.message ? ` — ${metaError.message}` : "";
+    super(`Meta WhatsApp API error: ${status}${detail}`);
+    this.name = "MetaWhatsAppError";
+    this.status = status;
+    this.metaError = metaError;
+  }
+}
+
 export async function sendWhatsAppText(to: string, body: string): Promise<void> {
   const token = process.env.META_WHATSAPP_TOKEN;
   const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
@@ -26,9 +46,17 @@ export async function sendWhatsAppText(to: string, body: string): Promise<void> 
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "(unreadable)");
-    console.error(`[MetaWhatsApp] Send failed: ${response.status} — ${errorText}`);
-    throw new Error(`Meta WhatsApp API error: ${response.status}`);
+    let metaError: MetaApiError | undefined;
+    try {
+      const json = await response.json() as { error?: MetaApiError };
+      if (json?.error) metaError = json.error;
+    } catch {
+      // ignore parse failure
+    }
+    console.error(
+      `[MetaWhatsApp] Send failed: ${response.status} code=${metaError?.code ?? "?"} type=${metaError?.type ?? "?"} msg=${metaError?.message ?? "(unknown)"}`
+    );
+    throw new MetaWhatsAppError(response.status, metaError);
   }
 
   const data = await response.json().catch(() => null) as { messages?: Array<{ id: string }> } | null;
