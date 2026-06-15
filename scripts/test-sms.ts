@@ -255,6 +255,24 @@ function testSlotExtractor(): void {
   assertDefined("t5: preferredDate defined (yarin or 3.20 captured)", t5.preferredDate);
   assertDefined("t5: leadScore defined", t5.leadScore);
   console.log(`    t5 slots: service=${t5.service ?? "none"} date=${t5.preferredDate ?? "none"} leadScore=${t5.leadScore ?? "none"}`);
+
+  // T6: Location extraction — structural patterns
+  const t6 = extractSlots("Kadıköy şubesi uygun olur.");
+  assertEqual("t6: location = Kadıköy (şubesi pattern)", t6.location, "Kadıköy");
+
+  const t7 = extractSlots("Konum Kadıköy");
+  assertEqual("t7: location = Kadıköy (konum prefix)", t7.location, "Kadıköy");
+
+  const t8 = extractSlots("Nişantaşı tarafı olur.");
+  assertEqual("t8: location = Nişantaşı (tarafı suffix)", t8.location, "Nişantaşı");
+
+  const t9 = extractSlots("Kadıköy olur.");
+  assertEqual("t9: location = Kadıköy (known district fallback)", t9.location, "Kadıköy");
+
+  const t10 = extractSlots("Şube olarak Ataşehir tercih ederim.");
+  assertEqual("t10: location = Ataşehir (şube olarak pattern)", t10.location, "Ataşehir");
+
+  console.log(`    t6-t10 location tests passed`);
 }
 
 // ── 3. Slot extractor: Turkish unicode messages ───────────────────────────

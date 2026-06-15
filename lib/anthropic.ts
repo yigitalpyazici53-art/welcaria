@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "./prompt";
-import { sanitizeSmsText } from "./sanitize";
+import { sanitizeReplyText } from "./sanitize";
 import type { ConversationState } from "./conversationState";
 
 // Lazy-initialized so the module can be imported before env vars are loaded
@@ -39,10 +39,10 @@ export async function generateSmsReply(
   );
   const raw = textBlock ? textBlock.text.trim() : "";
 
-  // Sanitize now so the value stored in history is already clean ASCII ≤120 chars.
-  // sendSms() will sanitize again, which is a no-op on already-clean text.
-  const clean = sanitizeSmsText(raw);
+  // Filter non-SMS characters but do NOT truncate — length is enforced only in
+  // sendSms() so that test/WhatsApp endpoints receive the full reply.
+  const clean = sanitizeReplyText(raw);
 
-  console.log("[Reply] generated (Claude):", clean);
+  console.log("[Reply] generated (Claude):", clean.slice(0, 80) + (clean.length > 80 ? "..." : ""));
   return clean;
 }

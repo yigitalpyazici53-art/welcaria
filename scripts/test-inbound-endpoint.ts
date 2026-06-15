@@ -131,6 +131,12 @@ function assertContains(label: string, haystack: string, needle: string) {
   else fail(label, `"${needle}" not found in "${haystack}"`);
 }
 
+function assertNotContains(label: string, haystack: string, needle: string) {
+  if (!haystack.toLowerCase().includes(needle.toLowerCase()))
+    pass(label, `correctly absent: "${needle}"`);
+  else fail(label, `"${needle}" unexpectedly found in "${haystack}"`);
+}
+
 // ── Pipeline runner (mirrors /api/test/inbound route logic) ──────────────
 
 const STAGE_FALLBACK: Record<string, string> = {
@@ -258,7 +264,6 @@ async function main() {
   assertEqual("service extracted = lazer epilasyon", r1.extractedSlots.service, "lazer epilasyon");
   assertDefined("stateAfter.service set", r1.stateAfter.service);
   assertDefined("reply non-empty", r1.assistantReply);
-  assertSms("reply valid SMS", r1.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r1.assistantReply);
 
   // ── Section 3: Turkish message 2 — date/time ─────────────────────────────
@@ -280,7 +285,6 @@ async function main() {
   assertDefined("preferredTime extracted", r2.extractedSlots.preferredTime);
   assertContains("preferredDate contains cumartesi", r2.extractedSlots.preferredDate ?? "", "cumartesi");
   assertDefined("reply non-empty", r2.assistantReply);
-  assertSms("reply valid SMS", r2.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r2.assistantReply);
 
   // ── Section 4: Turkish message 3 — name and phone ────────────────────────
@@ -302,7 +306,6 @@ async function main() {
   assertDefined("phone extracted", r3.extractedSlots.phone);
   assertContains("name contains Ayşe", r3.extractedSlots.name ?? "", "Ay");
   assertDefined("reply non-empty", r3.assistantReply);
-  assertSms("reply valid SMS", r3.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r3.assistantReply);
   assertDefined("stateAfter.name set", r3.stateAfter.name);
 
@@ -421,6 +424,56 @@ async function main() {
   const writeKey = getConversationKey(TEST_PHONE);
   assertEqual("read key === write key", readKey, writeKey);
   pass("key consistency verified", readKey);
+
+  // ── Section 9: 4-turn multi-turn — full lead with location ──────────────
+  console.log("\n── 9. Multi-turn: 4 turns — full lead with location ──");
+
+  const PHONE_4T = "+905551112300";
+  await resetStateForTest(PHONE_4T);
+
+  const mt4_1 = await runPipeline(PHONE_4T, "Merhaba lazer epilasyon fiyatı alabilir miyim?");
+  console.log(`  T1 service=${mt4_1.stateAfter.service ?? "(none)"} stage=${mt4_1.nextStage}`);
+
+  const mt4_2 = await runPipeline(PHONE_4T, "Tüm vücut için cumartesi öğleden sonra uygun olur.");
+  console.log(`  T2 date=${mt4_2.stateAfter.preferredDate ?? "(none)"} time=${mt4_2.stateAfter.preferredTime ?? "(none)"} leadScore=${mt4_2.stateAfter.leadScore}`);
+
+  const mt4_3 = await runPipeline(PHONE_4T, "Adım Ayşe Yılmaz, telefonum 0532 123 45 67.");
+  console.log(`  T3 name=${mt4_3.stateAfter.name ?? "(none)"} phone=${mt4_3.stateAfter.phone ?? "(none)"} stage=${mt4_3.nextStage}`);
+
+  const mt4_4 = await runPipeline(PHONE_4T, "Kadıköy şubesi uygun olur.");
+  console.log(`  T4 location=${mt4_4.stateAfter.location ?? "(none)"} stage=${mt4_4.nextStage}`);
+  console.log(`     extractedSlots=${JSON.stringify(mt4_4.extractedSlots)}`);
+  console.log(`     ownerAlert=${mt4_4.ownerAlertPreview ?? "(null)"}`);
+  console.log(`     reply=${mt4_4.assistantReply.slice(0, 80)}${mt4_4.assistantReply.length > 80 ? "..." : ""}`);
+
+  // Final state assertions after 4 turns
+  assertContains("T4: service = lazer epilasyon", mt4_4.stateAfter.service ?? "", "lazer epilasyon");
+  assertContains("T4: preferredDate = cumartesi", mt4_4.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("T4: preferredTime = öğleden sonra", mt4_4.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertContains("T4: name includes Ayşe", mt4_4.stateAfter.name ?? "", "Ayşe");
+  assertDefined("T4: phone captured", mt4_4.stateAfter.phone);
+  assertEqual("T4: phone normalized", mt4_4.stateAfter.phone, "05321234567");
+  assertContains("T4: location = Kadıköy", mt4_4.stateAfter.location ?? "", "Kadıköy");
+  assertEqual("T4: location extracted in slots", mt4_4.extractedSlots.location, "Kadıköy");
+  assertEqual("T4: leadScore = hot", mt4_4.stateAfter.leadScore, "hot");
+  assertEqual("T4: stage = complete", mt4_4.nextStage, "complete");
+  assertDefined("T4: ownerAlertPreview non-null", mt4_4.ownerAlertPreview);
+  if (mt4_4.ownerAlertPreview) {
+    assertNotContains("T4: ownerAlert no 'eksik: konum'", mt4_4.ownerAlertPreview, "eksik: konum");
+    assertContains("T4: ownerAlert includes Kadıköy", mt4_4.ownerAlertPreview, "Kadıköy");
+    assertContains("T4: ownerAlert includes HOT", mt4_4.ownerAlertPreview, "HOT");
+    assertContains("T4: ownerAlert includes lazer epilasyon", mt4_4.ownerAlertPreview, "lazer epilasyon");
+  }
+  // wouldLogToSheet logic mirrors /api/test/inbound route
+  const mt4_wouldLog = !!(
+    mt4_4.stateAfter.service &&
+    mt4_4.stateAfter.name &&
+    mt4_4.stateAfter.phone &&
+    (mt4_4.stateAfter.preferredDate || mt4_4.stateAfter.preferredTime) &&
+    mt4_4.stateAfter.location
+  );
+  if (mt4_wouldLog) pass("T4: wouldLogToSheet = true (lead complete)");
+  else fail("T4: wouldLogToSheet = true", "lead data incomplete — missing required fields");
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

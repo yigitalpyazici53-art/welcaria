@@ -59,6 +59,51 @@ const SERVICE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(wax|ağda)\b/i, "ağda"],
 ];
 
+// Known Istanbul districts and common Turkish cities for fallback location matching
+const KNOWN_LOCATIONS: Record<string, string> = {
+  "kadıköy":    "Kadıköy",
+  "ataşehir":   "Ataşehir",
+  "nişantaşı":  "Nişantaşı",
+  "beşiktaş":   "Beşiktaş",
+  "şişli":      "Şişli",
+  "fatih":      "Fatih",
+  "üsküdar":    "Üsküdar",
+  "bakırköy":   "Bakırköy",
+  "beyoğlu":    "Beyoğlu",
+  "sarıyer":    "Sarıyer",
+  "maltepe":    "Maltepe",
+  "kartal":     "Kartal",
+  "pendik":     "Pendik",
+  "tuzla":      "Tuzla",
+  "bağcılar":   "Bağcılar",
+  "mecidiyeköy": "Mecidiyeköy",
+  "levent":     "Levent",
+  "etiler":     "Etiler",
+  "bebek":      "Bebek",
+  "ortaköy":    "Ortaköy",
+  "bostancı":   "Bostancı",
+  "moda":       "Moda",
+  "ankara":     "Ankara",
+  "izmir":      "İzmir",
+  "bursa":      "Bursa",
+  "antalya":    "Antalya",
+};
+
+// Structural patterns for Turkish branch/location phrases.
+// Tuple: [regex, capture group index]
+// These run before the KNOWN_LOCATIONS fallback.
+const LOCATION_PATTERNS: Array<[RegExp, number]> = [
+  // "Kadıköy şubesi", "Ataşehir şubesini", "Nişantaşı şubesinde"
+  [/([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)?)\s+şube/, 1],
+  // "Konum Kadıköy", "konum Kadıköy", "Şube olarak Kadıköy", "şube olarak Kadıköy"
+  [/[Kk]onum\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
+  [/[Şş]ube\s+olarak\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
+  // "Nişantaşı tarafı olur", "Kadıköy yakın"
+  [/([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)\s+(?:tarafı|yakın)/, 1],
+  // "Bana Kadıköy yakın", "bana Kadıköy"
+  [/[Bb]ana\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
+];
+
 // Looks for explicit name introductions
 const NAME_PATTERNS: RegExp[] = [
   /\b(?:ben|benim adım|ismim|adım)\s+([A-ZÇĞİÖŞÜa-zçğışöüI]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöüI]{2,})?)\b/i,
@@ -116,6 +161,24 @@ export function extractSlots(message: string): ExtractedSlots {
     if (match?.[1]) {
       result.name = match[1].trim();
       break;
+    }
+  }
+
+  // Location extraction: structural patterns first, then known district/city lookup
+  for (const [pattern, group] of LOCATION_PATTERNS) {
+    const match = message.match(pattern);
+    if (match?.[group]) {
+      result.location = match[group].trim();
+      break;
+    }
+  }
+  if (!result.location) {
+    const lower = message.toLowerCase();
+    for (const [key, canonical] of Object.entries(KNOWN_LOCATIONS)) {
+      if (lower.includes(key)) {
+        result.location = canonical;
+        break;
+      }
     }
   }
 

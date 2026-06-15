@@ -32,6 +32,7 @@ export function buildOwnerAlert(
   if (state.preferredDate) parts.push(state.preferredDate);
   if (state.preferredTime) parts.push(state.preferredTime);
   if (state.name) parts.push(state.name);
+  if (state.location) parts.push(state.location);
 
   const missing: string[] = [];
   if (!state.preferredDate && !state.preferredTime) missing.push("tarih");

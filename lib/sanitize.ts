@@ -23,7 +23,7 @@ const CONTRACTIONS: Array<[RegExp, string]> = [
 // Turkish characters to preserve (Ç ç Ğ ğ İ ı Ö ö Ş ş Ü ü)
 const TURKISH_CHARS = "ÇçĞğİıÖöŞşÜü";
 
-export function sanitizeSmsText(text: string): string {
+function sanitizeBase(text: string): string {
   let s = text;
 
   s = s.replace(/['']/g, "\x27");
@@ -44,9 +44,16 @@ export function sanitizeSmsText(text: string): string {
 
   s = s.replace(/ {2,}/g, " ").trim();
 
-  if (s.length > SMS_MAX_CHARS) {
-    s = s.slice(0, SMS_MAX_CHARS);
-  }
-
   return s;
+}
+
+// Filters characters but does NOT truncate — use for AI replies stored in history
+// or returned to non-SMS endpoints. SMS truncation is applied only at send time.
+export function sanitizeReplyText(text: string): string {
+  return sanitizeBase(text);
+}
+
+export function sanitizeSmsText(text: string): string {
+  const s = sanitizeBase(text);
+  return s.length > SMS_MAX_CHARS ? s.slice(0, SMS_MAX_CHARS) : s;
 }

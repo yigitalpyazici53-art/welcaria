@@ -155,10 +155,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const ownerAlertPreview = wouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
 
   // ── 13. Sheet log preview — do NOT write to sheet ────────────────────────
+  // Reflects whether the accumulated lead data is complete enough to produce
+  // a meaningful sheet entry (env vars are a separate deployment concern).
   const wouldLogToSheet = !!(
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
-    process.env.GOOGLE_PRIVATE_KEY &&
-    process.env.GOOGLE_SHEET_ID
+    stateAfter.service &&
+    stateAfter.name &&
+    stateAfter.phone &&
+    (stateAfter.preferredDate || stateAfter.preferredTime) &&
+    stateAfter.location
   );
 
   const statePersistenceWarning =
