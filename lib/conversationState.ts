@@ -26,6 +26,7 @@ export interface ConversationState {
   lastUpdated: number;
   ownerAlertedHighUrgency?: boolean;
   ownerAlertedComplete?: boolean;
+  sheetLoggedComplete?: boolean;
 }
 
 const KEY_PREFIX = "conv:";

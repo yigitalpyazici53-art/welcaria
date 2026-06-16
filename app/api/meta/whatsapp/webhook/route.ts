@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processInboundMessage } from "@/lib/inboundPipeline";
 import { sendWhatsAppText } from "@/lib/metaWhatsApp";
+import { notifyOwner } from "@/lib/twilio";
+import { logToSheet } from "@/lib/googleSheets";
+import { updateState } from "@/lib/conversationState";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -151,6 +154,68 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       "[WhatsApp Webhook] Failed to send reply:",
       err instanceof Error ? err.message : err
     );
+  }
+
+  // ── Owner notification ──────────────────────────────────────────────────────
+  if (result.shouldNotifyOwner) {
+    try {
+      await notifyOwner(from, result.stateAfter);
+      console.log("[WhatsApp Webhook] owner notification sent");
+
+      const flagUpdates: Record<string, boolean> = {};
+      if (result.stateAfter.urgency === "high" && !result.stateAfter.ownerAlertedHighUrgency)
+        flagUpdates.ownerAlertedHighUrgency = true;
+      if (result.stateAfter.stage === "complete" && !result.stateAfter.ownerAlertedComplete)
+        flagUpdates.ownerAlertedComplete = true;
+      if (Object.keys(flagUpdates).length > 0) await updateState(from, flagUpdates);
+    } catch (err) {
+      console.error(
+        "[WhatsApp Webhook] Owner notify failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  // ── Google Sheets logging — fire-and-forget ─────────────────────────────────
+  // Only log when all required lead fields are present and not yet logged for this complete lead.
+  if (result.shouldLogToSheet && !result.stateAfter.sheetLoggedComplete) {
+    console.log("[WhatsApp Webhook] sheets log queued");
+    logToSheet({
+      createdAt: new Date().toISOString(),
+      source: "whatsapp",
+      name: result.stateAfter.name ?? "",
+      phone: result.stateAfter.phone ?? from,
+      service: result.stateAfter.service ?? "",
+      preferredDate: result.stateAfter.preferredDate ?? "",
+      preferredTime: result.stateAfter.preferredTime ?? "",
+      location: result.stateAfter.location ?? "",
+      urgency: result.stateAfter.urgency ?? "",
+      leadScore: result.stateAfter.leadScore ?? "",
+      intent: result.intent,
+      notes: result.stateAfter.notes ?? "",
+      conversationSummary: result.input.slice(0, 100),
+      status: result.stateAfter.stage === "complete" ? "complete" : "in_progress",
+    })
+      .then(() => {
+        if (result.stateAfter.stage === "complete") {
+          return updateState(from, { sheetLoggedComplete: true }).catch((err) => {
+            console.error(
+              "[WhatsApp Webhook] sheetLoggedComplete flag update failed:",
+              err instanceof Error ? err.message : err
+            );
+          });
+        }
+      })
+      .catch((err) => {
+        console.error(
+          "[WhatsApp Webhook] Sheets log failed:",
+          err instanceof Error ? err.message : err
+        );
+      });
+
+    if (result.stateAfter.stage === "complete") {
+      console.log("[WhatsApp Webhook] complete lead processed");
+    }
   }
 
   return NextResponse.json({

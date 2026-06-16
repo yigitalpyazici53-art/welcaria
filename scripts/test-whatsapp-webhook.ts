@@ -37,7 +37,7 @@ if (fs.existsSync(envFile)) {
 }
 
 // ── Safe to import lib modules now ────────────────────────────────────────────
-import { resetStateForTest, getStateStorageMode } from "../lib/conversationState";
+import { resetStateForTest, getStateStorageMode, getState, updateState } from "../lib/conversationState";
 import { processInboundMessage } from "../lib/inboundPipeline";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -308,6 +308,52 @@ async function main() {
   for (const { condition, reason } of ignoredReasons) {
     pass(`Ignored: ${condition} → reason="${reason}"`);
   }
+
+  // ── Section 5: Deduplication flag behavior ────────────────────────────────
+  // Tests that ownerAlertedComplete and sheetLoggedComplete flags are persisted
+  // and prevent duplicate owner alerts and Sheets rows on follow-up messages.
+  // PHONE_MT (905551112401) is already at stage=complete after Section 2 / T4.
+  console.log("\n── 5. Deduplication flag behavior (owner alert + sheet log) ──");
+
+  // 5a. Before route simulation: flags should NOT be set (pipeline doesn't write them)
+  const statePreFlags = await getState(PHONE_MT);
+
+  const isFirstComplete_pre = statePreFlags.stage === "complete" && !statePreFlags.ownerAlertedComplete;
+  if (isFirstComplete_pre) pass("D1: isFirstComplete triggers before flag written");
+  else fail("D1: isFirstComplete triggers before flag written", "ownerAlertedComplete unexpectedly already true");
+
+  const sheetWouldLog_pre = !statePreFlags.sheetLoggedComplete;
+  if (sheetWouldLog_pre) pass("D2: sheetLoggedComplete not set — sheet log would fire");
+  else fail("D2: sheetLoggedComplete not set", "sheetLoggedComplete unexpectedly already true");
+
+  // 5b. Simulate the route writing flags after notifyOwner + logToSheet succeed
+  await updateState(PHONE_MT, { ownerAlertedComplete: true, sheetLoggedComplete: true });
+  const statePostFlags = await getState(PHONE_MT);
+
+  assertEqual("D3: ownerAlertedComplete = true after route simulation", statePostFlags.ownerAlertedComplete, true);
+  assertEqual("D4: sheetLoggedComplete = true after route simulation", statePostFlags.sheetLoggedComplete, true);
+
+  // 5c. Follow-up message from same customer — flags must survive the next pipeline turn
+  const tFollowUp = await processInboundMessage({
+    from: PHONE_MT,
+    body: "Tamam, teşekkürler",
+    source: "whatsapp",
+  });
+
+  // isFirstComplete condition must be false — deduplication for owner alert works
+  const isFirstComplete_post =
+    tFollowUp.stateAfter.stage === "complete" && !tFollowUp.stateAfter.ownerAlertedComplete;
+  if (!isFirstComplete_post)
+    pass("D5: isFirstComplete = false after flag set (no duplicate owner alert)");
+  else
+    fail("D5: isFirstComplete = false after flag set", "ownerAlertedComplete was lost across pipeline turn");
+
+  // sheetLoggedComplete must still be true — no duplicate Sheets row
+  assertEqual(
+    "D6: sheetLoggedComplete still true after follow-up turn",
+    tFollowUp.stateAfter.sheetLoggedComplete,
+    true
+  );
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
