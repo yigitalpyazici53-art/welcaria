@@ -176,45 +176,45 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // ── Google Sheets logging — fire-and-forget ─────────────────────────────────
-  // Only log when all required lead fields are present and not yet logged for this complete lead.
-  if (result.shouldLogToSheet && !result.stateAfter.sheetLoggedComplete) {
-    console.log("[WhatsApp Webhook] sheets log queued");
-    logToSheet({
-      createdAt: new Date().toISOString(),
-      source: "whatsapp",
-      name: result.stateAfter.name ?? "",
-      phone: result.stateAfter.phone ?? from,
-      service: result.stateAfter.service ?? "",
-      preferredDate: result.stateAfter.preferredDate ?? "",
-      preferredTime: result.stateAfter.preferredTime ?? "",
-      location: result.stateAfter.location ?? "",
-      urgency: result.stateAfter.urgency ?? "",
-      leadScore: result.stateAfter.leadScore ?? "",
-      intent: result.intent,
-      notes: result.stateAfter.notes ?? "",
-      conversationSummary: result.input.slice(0, 100),
-      status: result.stateAfter.stage === "complete" ? "complete" : "in_progress",
-    })
-      .then(() => {
-        if (result.stateAfter.stage === "complete") {
-          return updateState(from, { sheetLoggedComplete: true }).catch((err) => {
-            console.error(
-              "[WhatsApp Webhook] sheetLoggedComplete flag update failed:",
-              err instanceof Error ? err.message : err
-            );
-          });
-        }
-      })
-      .catch((err) => {
-        console.error(
-          "[WhatsApp Webhook] Sheets log failed:",
-          err instanceof Error ? err.message : err
-        );
-      });
+  // ── Google Sheets logging ────────────────────────────────────────────────────
+  const sheetsStage = result.stateAfter.stage;
+  const shouldLogToSheet = result.shouldLogToSheet;
+  const sheetLoggedComplete = result.stateAfter.sheetLoggedComplete ?? false;
 
-    if (result.stateAfter.stage === "complete") {
-      console.log("[WhatsApp Webhook] complete lead processed");
+  console.log(
+    `[WhatsApp Webhook] sheets decision stage=${sheetsStage} shouldLogToSheet=${shouldLogToSheet} sheetLoggedComplete=${sheetLoggedComplete}`
+  );
+
+  if (sheetsStage !== "complete") {
+    console.log("[WhatsApp Webhook] sheets skipped reason=not_complete");
+  } else if (sheetLoggedComplete) {
+    console.log("[WhatsApp Webhook] sheets skipped reason=already_logged");
+  } else {
+    console.log("[WhatsApp Webhook] sheets log queued");
+    try {
+      await logToSheet({
+        createdAt: new Date().toISOString(),
+        source: "whatsapp",
+        name: result.stateAfter.name ?? "",
+        phone: result.stateAfter.phone ?? from,
+        service: result.stateAfter.service ?? "",
+        preferredDate: result.stateAfter.preferredDate ?? "",
+        preferredTime: result.stateAfter.preferredTime ?? "",
+        location: result.stateAfter.location ?? "",
+        urgency: result.stateAfter.urgency ?? "",
+        leadScore: result.stateAfter.leadScore ?? "",
+        intent: result.intent,
+        notes: result.stateAfter.notes ?? "",
+        conversationSummary: result.input.slice(0, 100),
+        status: "complete",
+      });
+      console.log("[WhatsApp Webhook] sheets log success");
+      await updateState(from, { sheetLoggedComplete: true });
+    } catch (err) {
+      console.error(
+        "[WhatsApp Webhook] Sheets log failed:",
+        err instanceof Error ? err.message : err
+      );
     }
   }
 

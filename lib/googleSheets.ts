@@ -45,7 +45,7 @@ export async function logToSheet(entry: LogEntry): Promise<void> {
     ]
       .filter(Boolean)
       .join(", ");
-    console.warn(`[Sheets] Skipping log — missing env vars: ${missing}`);
+    console.warn(`[GoogleSheets] missing env vars; skipping sheet log (missing: ${missing})`);
     return;
   }
 
