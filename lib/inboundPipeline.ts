@@ -95,6 +95,10 @@ export async function processInboundMessage(
       leadScore: recalcScore,
       stage: getNextStage(stateUpdated),
     });
+    // Single-location pilot: default location to "Ümraniye" when stage reaches complete
+    if (stateUpdated.stage === "complete" && !stateUpdated.location) {
+      stateUpdated = await updateState(from, { location: "Ümraniye" });
+    }
     await addToHistory(from, "user", input);
 
     if (process.env.ANTHROPIC_API_KEY) {

@@ -190,6 +190,10 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
     let updated = await updateState(from, extractedSlots as Partial<ConversationState>);
     const recalcScore = calculateLeadScoreFromState(updated);
     updated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(updated) });
+    // Single-location pilot: default location to "Ümraniye" when stage reaches complete
+    if (updated.stage === "complete" && !updated.location) {
+      updated = await updateState(from, { location: "Ümraniye" });
+    }
     await addToHistory(from, "user", input);
 
     if (process.env.ANTHROPIC_API_KEY) {
@@ -604,6 +608,118 @@ async function main() {
   assertEqual("S3: Konum: Ataşehir → Ataşehir", extractSlots("Konum: Ataşehir").location, "Ataşehir");
   assertEqual("S4: Lokasyon: Beşiktaş → Beşiktaş", extractSlots("Lokasyon: Beşiktaş").location, "Beşiktaş");
   assertEqual("S5: Ümraniye şubesi uygun → Ümraniye", extractSlots("Ümraniye şubesi uygun").location, "Ümraniye");
+
+  // ── Section 12: Flow A — saç boyama fiyat sorusu ────────────────────────
+  console.log("\n── 12. Flow A: saç boyama fiyat sorusu ──");
+
+  const PHONE_FA = "+905551112601";
+  await resetStateForTest(PHONE_FA);
+
+  const flowA_slots = extractSlots("Merhaba saç boyama fiyatı alabilir miyim?");
+  console.log(`  service : ${flowA_slots.service ?? "(none)"}`);
+  assertEqual("FA: service = saç boyama", flowA_slots.service, "saç boyama");
+
+  const fa = await runPipeline(PHONE_FA, "Merhaba saç boyama fiyatı alabilir miyim?");
+  console.log(`  intent  : ${fa.intent}`);
+  console.log(`  stage   : ${fa.nextStage}`);
+  console.log(`  reply   : ${fa.assistantReply}`);
+  assertDefined("FA: reply non-empty", fa.assistantReply);
+  assertNoProhibitedPhrases("FA: no prohibited phrases", fa.assistantReply);
+  assertNotContains("FA: reply must not invent price (₺)", fa.assistantReply, "₺");
+  assertNotContains("FA: reply must not invent price (tl)", fa.assistantReply, " tl");
+
+  // ── Section 13: Flow B — kaş alma tarih sorusu ───────────────────────────
+  console.log("\n── 13. Flow B: kaş alma için cumartesi ──");
+
+  const flowB_slots = extractSlots("Kaş alma için cumartesi uygun musunuz?");
+  console.log(`  service       : ${flowB_slots.service ?? "(none)"}`);
+  console.log(`  preferredDate : ${flowB_slots.preferredDate ?? "(none)"}`);
+  assertEqual("FB: service = kaş alma", flowB_slots.service, "kaş alma");
+  assertContains("FB: preferredDate = cumartesi", flowB_slots.preferredDate ?? "", "cumartesi");
+
+  // ── Section 14: Flow C — structured salon message (location-optional pilot) ──
+  console.log("\n── 14. Flow C: yapılandırılmış mesaj — konum isteğe bağlı ──");
+
+  const salonStructuredMsg = [
+    "İsim: Aylin",
+    "Telefon: 05313456576",
+    "Hizmet: saç boyama",
+    "Zaman: cumartesi öğleden sonra",
+  ].join("\n");
+
+  const fc_slots = extractSlots(salonStructuredMsg);
+  console.log(`  name          : ${fc_slots.name ?? "(none)"}`);
+  console.log(`  phone         : ${fc_slots.phone ?? "(none)"}`);
+  console.log(`  service       : ${fc_slots.service ?? "(none)"}`);
+  console.log(`  preferredDate : ${fc_slots.preferredDate ?? "(none)"}`);
+  console.log(`  preferredTime : ${fc_slots.preferredTime ?? "(none)"}`);
+
+  assertEqual("FC: name = Aylin", fc_slots.name, "Aylin");
+  assertEqual("FC: phone = 05313456576", fc_slots.phone, "05313456576");
+  assertEqual("FC: service = saç boyama", fc_slots.service, "saç boyama");
+  assertContains("FC: preferredDate = cumartesi", fc_slots.preferredDate ?? "", "cumartesi");
+  assertContains("FC: preferredTime = öğleden sonra", fc_slots.preferredTime ?? "", "öğleden sonra");
+
+  const PHONE_FC = "+905551112602";
+  await resetStateForTest(PHONE_FC);
+  const fc = await runPipeline(PHONE_FC, salonStructuredMsg);
+  console.log(`  stage         : ${fc.nextStage}`);
+  console.log(`  location      : ${fc.stateAfter.location ?? "(none)"}`);
+  assertEqual("FC: stage = complete (location optional)", fc.nextStage, "complete");
+  assertDefined("FC: location defaulted to Ümraniye", fc.stateAfter.location);
+  assertContains("FC: location = Ümraniye", fc.stateAfter.location ?? "", "Ümraniye");
+
+  // ── Section 15: Flow D — mikroblading fiyat sorusu ──────────────────────
+  console.log("\n── 15. Flow D: mikroblading fiyat sorusu ──");
+
+  const PHONE_FD = "+905551112603";
+  await resetStateForTest(PHONE_FD);
+
+  const flowD_slots = extractSlots("Mikroblading yaptırmak istiyorum fiyat nedir?");
+  console.log(`  service : ${flowD_slots.service ?? "(none)"}`);
+  assertEqual("FD: service = mikroblading", flowD_slots.service, "mikroblading");
+
+  const fd = await runPipeline(PHONE_FD, "Mikroblading yaptırmak istiyorum fiyat nedir?");
+  console.log(`  intent  : ${fd.intent}`);
+  console.log(`  reply   : ${fd.assistantReply}`);
+  assertDefined("FD: reply non-empty", fd.assistantReply);
+  assertNoProhibitedPhrases("FD: no prohibited phrases", fd.assistantReply);
+  assertNotContains("FD: reply must not invent price (₺)", fd.assistantReply, "₺");
+  assertNotContains("FD: reply must not invent price (tl)", fd.assistantReply, " tl");
+
+  // ── Section 16: Beauty service slot extraction unit tests ────────────────
+  console.log("\n── 16. Beauty service extraction unit tests ──");
+
+  const svcTests: Array<[string, string]> = [
+    ["ağda yaptırmak istiyorum", "ağda"],
+    ["Kaş alma için randevu istiyorum", "kaş alma"],
+    ["kaş tasarımı yaptırmak istiyorum", "kaş tasarımı"],
+    ["Mikroblading hakkında bilgi almak istiyorum", "mikroblading"],
+    ["kirpik lifting randevusu alabilir miyim?", "kirpik lifting"],
+    ["ipek kirpik yaptırmak istiyorum", "ipek kirpik"],
+    ["cilt bakımı için uygun gününüz var mı?", "cilt bakımı"],
+    ["Manikür yaptırmak istiyorum", "manikür"],
+    ["pedikür randevusu istiyorum", "pedikür"],
+    ["Protez tırnak için fiyat soruyorum", "protez tırnak"],
+    ["saç kesimi için cumartesi uygun mu?", "saç kesimi"],
+    ["saç boyama istiyorum", "saç boyama"],
+    ["Dip boya yaptırmak istiyorum", "dip boya"],
+    ["röfle yaptırmak istiyorum", "röfle"],
+    ["Ombre saç istiyorum", "ombre"],
+    ["Fön için randevu", "fön"],
+    ["saç kaynaklama fiyatları nedir?", "saç kaynaklama"],
+    ["saç kaynak istiyorum", "saç kaynaklama"],
+    ["gelin saçı için randevu almak istiyorum", "gelin saçı"],
+    ["makyaj randevusu istiyorum", "makyaj"],
+    ["saç bakımı için uygun gün var mı?", "saç bakımı"],
+    ["keratin bakım yaptırmak istiyorum", "keratin bakımı"],
+    ["protez tırnak fiyatı nedir?", "protez tırnak"],
+  ];
+
+  for (const [msg, expectedService] of svcTests) {
+    const slots = extractSlots(msg);
+    assertEqual(`SVC: "${msg.slice(0, 35)}" → ${expectedService}`, slots.service, expectedService);
+  }
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

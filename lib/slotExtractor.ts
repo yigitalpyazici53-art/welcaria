@@ -40,23 +40,48 @@ const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
   [/\b(acele değil|acele yok|uygun olduğunda|ne zaman uygunsa|fırsat buldukça)\b/i, "low"],
 ];
 
-// Common Turkish service business offerings
+// Service offerings — most specific patterns first to avoid partial matches.
+// Turkish chars (ş, ğ, ü, ö, ı) are not in \w, so \b is unreliable around them;
+// use specific phrases instead.
 const SERVICE_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(saç kesim|saç boyama|saç bakım|saç şekillendirme|hairstyle|haircut)\b/i, "saç bakımı"],
-  [/\b(manikür|manicure|oje|tırnak)\b/i, "manikür"],
-  [/\b(pedikür|pedicure)\b/i, "pedikür"],
-  [/\b(kalıcı oje|kalıcı manikür|gel manikür)\b/i, "kalıcı manikür"],
-  [/\b(kirpik lifting|kirpik lamine|kirpik boya|lash lift|lash)\b/i, "kirpik bakımı"],
-  [/\b(kaş tasarım|kaş aldırma|kaş laminasyon|brow|kaş)\b/i, "kaş tasarımı"],
-  [/\b(cilt bakım|yüz bakım|yüz maskesi|facial)\b/i, "cilt bakımı"],
-  [/\b(botox|botoks|dolgu|filler|lip filler|dudak dolgu)\b/i, "estetik uygulama"],
-  [/\b(lazer epilasyon|epilasyon|lazer)\b/i, "lazer epilasyon"],
-  [/\b(masaj|massage|terapi)\b/i, "masaj"],
-  // "diş" ends in ş (non-\w) so trailing \b fails — use (?!\w) lookahead instead
-  [/\b(diş\s+(?:beyazlatma|kaplama)|veneer|zirkonyum|implant|\bdiş(?!\w))/i, "diş tedavisi"],
-  [/\b(oto detay|araç yıkama|araç detay|araç bakım|car detail|car wash)\b/i, "oto detay"],
-  [/\b(sakal|tıraş|erkek bakım|barber)\b/i, "erkek bakımı"],
-  [/\b(wax|ağda)\b/i, "ağda"],
+  // Hair — compound/specific before generic
+  [/saç\s+kaynak(?:lama)?/i, "saç kaynaklama"],
+  [/gelin\s+saç/i, "gelin saçı"],
+  [/keratin\s+bak/i, "keratin bakımı"],
+  [/dip\s+boya/i, "dip boya"],
+  [/saç\s+boyama/i, "saç boyama"],
+  [/saç\s+kesim/i, "saç kesimi"],
+  [/saç\s+bak/i, "saç bakımı"],
+  [/röfle/i, "röfle"],
+  [/ombre/i, "ombre"],
+  [/fön/i, "fön"],
+  // Brow & lash
+  [/mikroblading/i, "mikroblading"],
+  [/kirpik\s+lifting|lash\s+lift/i, "kirpik lifting"],
+  [/ipek\s+kirpik/i, "ipek kirpik"],
+  [/kaş\s+tasarım|kaş\s+laminasyon|brow/i, "kaş tasarımı"],
+  [/kaş\s+(?:alma|aldırma)/i, "kaş alma"],
+  [/kirpik\s+(?:lamine|boya)/i, "kirpik bakımı"],
+  // Skin
+  [/cilt\s+bak|yüz\s+bak|facial/i, "cilt bakımı"],
+  // Nails
+  [/protez\s+tırnak/i, "protez tırnak"],
+  [/kalıcı\s+(?:oje|manikür)|gel\s+manikür/i, "kalıcı manikür"],
+  [/manikür|manicure/i, "manikür"],
+  [/pedikür|pedicure/i, "pedikür"],
+  // Waxing
+  [/ağda|\bwax\b/i, "ağda"],
+  // Makeup
+  [/makyaj/i, "makyaj"],
+  // Other service verticals
+  [/lazer\s+epilasyon|epilasyon|\blazer\b/i, "lazer epilasyon"],
+  [/botoks?|dolgu|filler/i, "estetik uygulama"],
+  [/masaj|massage|terapi/i, "masaj"],
+  // "diş" ends in ş (non-\w) so trailing \b fails — use (?!\w) lookahead
+  [/diş\s+(?:beyazlatma|kaplama)|veneer|zirkonyum|implant|\bdiş(?!\w)/i, "diş tedavisi"],
+  [/oto\s+detay|araç\s+(?:yıkama|detay|bakım)|car\s+(?:detail|wash)/i, "oto detay"],
+  [/sakal|tıraş|erkek\s+bakım|barber/i, "erkek bakımı"],
+  [/hairstyle|haircut/i, "saç kesimi"],
 ];
 
 // Known Istanbul districts and common Turkish cities for fallback location matching
@@ -122,6 +147,7 @@ const NAME_PATTERNS: RegExp[] = [
 const NAME_BLOCKLIST = new Set([
   // services
   "lazer", "epilasyon", "masaj", "manikür", "pedikür", "botoks", "dolgu", "wax", "ağda",
+  "makyaj", "ombre", "röfle", "fön", "mikroblading", "kirpik", "protez", "keratin",
   // locations (lowercase)
   "kadıköy", "ataşehir", "nişantaşı", "beşiktaş", "şişli", "fatih", "üsküdar",
   "bakırköy", "beyoğlu", "sarıyer", "maltepe", "kartal", "pendik", "tuzla",

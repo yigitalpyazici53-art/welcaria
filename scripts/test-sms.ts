@@ -357,18 +357,18 @@ async function testConversationState(): Promise<void> {
   state = await updateState(phone, { service: "manikur" });
   assertEqual("getNextStage after service=collect_datetime", getNextStage(state), "collect_datetime");
 
-  // After date → collect_location
+  // After date → complete (single-location pilot: collect_location is skipped)
   state = await updateState(phone, { preferredDate: "cumartesi" });
-  assertEqual("getNextStage after date=collect_location", getNextStage(state), "collect_location");
+  assertEqual("getNextStage after date=complete (location optional)", getNextStage(state), "complete");
 
-  // After location → complete
+  // After location → complete (still complete when location is also present)
   state = await updateState(phone, { location: "Kadikoy subesi" });
   assertEqual("getNextStage after location=complete", getNextStage(state), "complete");
 
   console.log(
     `  Final state: name=${state.name} service=${state.service} date=${state.preferredDate} stage=${getNextStage(state)}`
   );
-  pass("all stages traversed: collect_name -> collect_service -> collect_datetime -> collect_location -> complete");
+  pass("all stages traversed: collect_name -> collect_service -> collect_datetime -> complete");
 }
 
 // ── 6. updateState undefined-filter test ─────────────────────────────────

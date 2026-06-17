@@ -158,7 +158,8 @@ export function getNextStage(state: ConversationState): Stage {
   if (!state.name) return "collect_name";
   if (!state.service) return "collect_service";
   if (!state.preferredDate && !state.preferredTime) return "collect_datetime";
-  if (!state.location) return "collect_location";
+  // Single-location pilot (Ümraniye): location is auto-defaulted in inboundPipeline,
+  // so we skip collect_location and go directly to complete.
   return "complete";
 }
 
