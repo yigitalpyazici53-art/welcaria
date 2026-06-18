@@ -61,18 +61,23 @@ export async function processInboundMessage(
   }
 
   // Stage-aware name fallback: bare Turkish names like "ayşe" or "mehmet" aren't caught
-  // by NAME_PATTERNS (which require explicit prefixes). When we're in collect_name stage
-  // or the last assistant message asked for a name, try the heuristic fallback.
+  // by NAME_PATTERNS (which require explicit prefixes). Try the heuristic fallback when
+  // no other slots were extracted from this message (guard) and either the stage expects
+  // a name or the user appears to be volunteering one early.
   if (!extractedSlots.name) {
+    const noOtherSlots = Object.keys(extractedSlots).filter(k => k !== "leadScore").length === 0;
     const needFallback =
-      stateBefore.stage === "collect_name" ||
-      stateBefore.history
-        .slice(-2)
-        .some(
-          (h) =>
-            h.role === "assistant" &&
-            /isminizi|adınızı|adınız\b|adını/i.test(h.content)
-        );
+      noOtherSlots &&
+      (stateBefore.stage === "collect_name" ||
+        stateBefore.stage === "collect_first_time" ||
+        stateBefore.stage === "collect_datetime" ||
+        stateBefore.history
+          .slice(-2)
+          .some(
+            (h) =>
+              h.role === "assistant" &&
+              /isminizi|adınızı|adınız\b|adını/i.test(h.content)
+          ));
     if (needFallback) {
       const fallback = extractNameFallback(input);
       if (fallback) extractedSlots.name = fallback;
