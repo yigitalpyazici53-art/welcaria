@@ -57,6 +57,8 @@ export function buildOwnerAlert(
   if (state.preferredTime) timeParts.push(state.preferredTime);
   if (timeParts.length) lines.push(`Zaman: ${timeParts.join(" ")}`);
 
+  if (state.location) lines.push(`Konum: ${state.location}`);
+
   if (score === "HOT") lines.push("Hizli donus yapilmali");
 
   return lines.join("\n");
