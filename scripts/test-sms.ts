@@ -349,13 +349,9 @@ async function testConversationState(): Promise<void> {
   let state = await getState(phone);
   assertEqual("initial stage=collect_treatment_area", state.stage, "collect_treatment_area");
 
-  // After treatmentArea → collect_first_time
+  // After treatmentArea → collect_datetime (firstTimeLaser is advisory, not a gate)
   state = await updateState(phone, { treatmentArea: "tüm vücut", service: "lazer epilasyon" });
-  assertEqual("getNextStage after treatmentArea=collect_first_time", getNextStage(state), "collect_first_time");
-
-  // After firstTimeLaser → collect_datetime
-  state = await updateState(phone, { firstTimeLaser: true });
-  assertEqual("getNextStage after firstTimeLaser=collect_datetime", getNextStage(state), "collect_datetime");
+  assertEqual("getNextStage after treatmentArea=collect_datetime", getNextStage(state), "collect_datetime");
 
   // After date → collect_name
   state = await updateState(phone, { preferredDate: "cumartesi" });
@@ -368,7 +364,7 @@ async function testConversationState(): Promise<void> {
   console.log(
     `  Final state: treatmentArea=${state.treatmentArea} date=${state.preferredDate} name=${state.name} stage=${getNextStage(state)}`
   );
-  pass("all stages traversed: collect_treatment_area -> collect_first_time -> collect_datetime -> collect_name -> complete");
+  pass("all stages traversed: collect_treatment_area -> collect_datetime -> collect_name -> complete");
 }
 
 // ── 6. updateState undefined-filter test ─────────────────────────────────

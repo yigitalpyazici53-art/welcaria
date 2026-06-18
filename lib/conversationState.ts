@@ -159,7 +159,6 @@ export async function addToHistory(
 
 export function getNextStage(state: ConversationState): Stage {
   if (!state.treatmentArea && !state.service) return "collect_treatment_area";
-  if (state.firstTimeLaser === undefined) return "collect_first_time";
   if (!state.preferredDate && !state.preferredTime) return "collect_datetime";
   if (!state.name) return "collect_name";
   return "complete";

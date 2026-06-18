@@ -284,7 +284,7 @@ async function main() {
   assertEqual("treatmentArea = tüm vücut", r1.extractedSlots.treatmentArea, "tüm vücut");
   assertEqual("service normalized = lazer epilasyon", r1.extractedSlots.service, "lazer epilasyon");
   assertEqual("priceInquired = true", r1.extractedSlots.priceInquired, true);
-  assertEqual("stage = collect_first_time", r1.nextStage, "collect_first_time");
+  assertEqual("stage = collect_datetime", r1.nextStage, "collect_datetime");
   assertDefined("reply non-empty", r1.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r1.assistantReply);
   assertNotContains("reply must not invent price (₺)", r1.assistantReply, "₺");
@@ -359,7 +359,7 @@ async function main() {
   const mt1 = await runPipeline(PHONE_MT, "Merhaba tüm vücut lazer epilasyon fiyatı ne kadar?");
   console.log(`  T1 treatmentArea=${mt1.stateAfter.treatmentArea ?? "(none)"} stage=${mt1.nextStage} score=${mt1.stateAfter.leadScore}`);
   assertDefined("T1: treatmentArea set", mt1.stateAfter.treatmentArea);
-  assertEqual("T1: stage = collect_first_time", mt1.nextStage, "collect_first_time");
+  assertEqual("T1: stage = collect_datetime", mt1.nextStage, "collect_datetime");
   assertEqual("T1: priceInquired", mt1.stateAfter.priceInquired, true);
 
   // T2: first-time + date/time — treatment area must carry over
@@ -444,7 +444,7 @@ async function main() {
   pass("key consistency verified", readKey);
 
   // ── Section 9: Demo scenario A — price inquiry triggers first-time question ─
-  console.log("\n── 9. Demo A: tüm vücut fiyat sorusu → collect_first_time ──");
+  console.log("\n── 9. Demo A: tüm vücut fiyat sorusu → collect_datetime ──");
 
   const PHONE_DA = "+905551112300";
   await resetStateForTest(PHONE_DA);
@@ -454,7 +454,7 @@ async function main() {
   console.log(`  reply: ${da1.assistantReply}`);
 
   assertEqual("DA/T1: treatmentArea = tüm vücut", da1.stateAfter.treatmentArea, "tüm vücut");
-  assertEqual("DA/T1: stage = collect_first_time", da1.nextStage, "collect_first_time");
+  assertEqual("DA/T1: stage = collect_datetime", da1.nextStage, "collect_datetime");
   assertEqual("DA/T1: priceInquired = true", da1.stateAfter.priceInquired, true);
   assertDefined("DA/T1: reply non-empty", da1.assistantReply);
   assertNoProhibitedPhrases("DA/T1: no prohibited phrases", da1.assistantReply);
@@ -619,12 +619,11 @@ async function main() {
   assertEqual("S1: location = Ümraniye", sSlots.location, "Ümraniye");
 
   // Structured message must reach complete in a single pipeline turn
-  // (firstTimeLaser is not in the message, so stage stops at collect_first_time)
+  // (firstTimeLaser is advisory — its absence does not block completion)
   const PHONE_S1 = "+905551112500";
   await resetStateForTest(PHONE_S1);
   const sr1 = await runPipeline(PHONE_S1, structuredMsg);
-  // Without firstTimeLaser, getNextStage stays at collect_first_time
-  assertEqual("S1: stage = collect_first_time (firstTimeLaser missing)", sr1.nextStage, "collect_first_time");
+  assertEqual("S1: stage = complete (firstTimeLaser advisory, not required)", sr1.nextStage, "complete");
 
   // With firstTimeLaser in a short single message that stays under SMS_MAX_CHARS (120):
   // sanitizeSmsText collapses newlines to spaces and truncates at 120 chars —
