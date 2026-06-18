@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "RandevuFlow — Akıllı Müşteri Karşılama Sistemi",
-  description: "WhatsApp ve Instagram'dan gelen müşterileri randevu talebine çevirin. Güzellik salonları, estetik merkezleri ve servis işletmeleri için.",
+  title: "RandevuFlow — Lazer Epilasyon ve Estetik Merkezleri için AI Randevu Asistanı",
+  description: "Instagram ve WhatsApp mesajlarınızı otomatik olarak dolu randevulara çevirin. Lazer epilasyon ve estetik merkezleri için 7/24 AI müşteri asistanı.",
 };
 
 export default function RootLayout({

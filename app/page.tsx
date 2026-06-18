@@ -1,719 +1,1009 @@
-const colors = {
+import { Outfit } from "next/font/google";
+
+const outfit = Outfit({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+});
+
+const WHATSAPP_URL = "https://wa.me/905XXXXXXXXX";
+
+const C = {
+  teal: "#0d9488",
+  tealHover: "#0f766e",
+  tealBg: "#f0fdfa",
+  tealBorder: "#99f6e4",
   bg: "#ffffff",
   bgAlt: "#f8fafc",
-  bgDark: "#0f172a",
-  primary: "#2563eb",
-  primaryDark: "#1d4ed8",
-  indigo: "#6366f1",
-  text: "#1e293b",
+  bgDark: "#0c1427",
+  text: "#0f172a",
   textMuted: "#64748b",
   border: "#e2e8f0",
-  green: "#10b981",
+  whatsapp: "#25d366",
   amber: "#f59e0b",
+  red: "#ef4444",
 };
 
-const styles = {
-  page: {
-    background: colors.bg,
-    color: colors.text,
-    minHeight: "100vh",
-  } as React.CSSProperties,
+function CheckIcon({ white }: { white?: boolean }) {
+  const fill = white ? "rgba(13,148,136,0.28)" : C.tealBg;
+  const stroke = white ? "#5eead4" : C.teal;
+  return (
+    <svg width="17" height="17" viewBox="0 0 17 17" fill="none" style={{ flexShrink: 0, marginTop: "1px" }}>
+      <circle cx="8.5" cy="8.5" r="8.5" fill={fill} />
+      <path d="M5.5 8.5L7.5 10.5L11.5 6.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
-  nav: {
-    padding: "1rem 2rem",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottom: `1px solid ${colors.border}`,
-    background: colors.bg,
-    position: "sticky",
-    top: 0,
-    zIndex: 10,
-  } as React.CSSProperties,
+function CheckList({ items, white }: { items: string[]; white?: boolean }) {
+  return (
+    <div style={{ margin: "1.5rem 0" }}>
+      {items.map((item) => (
+        <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", padding: "0.35rem 0", fontSize: "0.9rem", color: white ? "#cbd5e1" : C.text }}>
+          <CheckIcon white={white} />
+          <span>{item}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  logo: {
-    fontSize: "1.25rem",
-    fontWeight: 700,
-    color: colors.primary,
-    letterSpacing: "-0.02em",
-  } as React.CSSProperties,
-
-  navCta: {
-    background: colors.primary,
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    padding: "0.5rem 1.25rem",
-    fontSize: "0.875rem",
-    fontWeight: 600,
-    cursor: "pointer",
-    textDecoration: "none",
-    display: "inline-block",
-  } as React.CSSProperties,
-
-  hero: {
-    maxWidth: "760px",
-    margin: "0 auto",
-    padding: "5rem 2rem 4rem",
-    textAlign: "center",
-  } as React.CSSProperties,
-
-  badge: {
-    display: "inline-block",
-    background: "#eff6ff",
-    color: colors.primary,
-    fontSize: "0.8rem",
-    fontWeight: 600,
-    padding: "0.3rem 0.9rem",
-    borderRadius: "999px",
-    marginBottom: "1.5rem",
-    border: `1px solid #bfdbfe`,
-  } as React.CSSProperties,
-
-  badgeAmber: {
-    display: "inline-block",
-    background: "#fffbeb",
-    color: "#92400e",
-    fontSize: "0.8rem",
-    fontWeight: 600,
-    padding: "0.3rem 0.9rem",
-    borderRadius: "999px",
-    marginBottom: "1.5rem",
-    border: `1px solid #fcd34d`,
-  } as React.CSSProperties,
-
-  h1: {
-    fontSize: "clamp(2rem, 5vw, 3rem)",
-    fontWeight: 800,
-    lineHeight: 1.15,
-    color: colors.text,
-    marginBottom: "1.25rem",
-    letterSpacing: "-0.03em",
-  } as React.CSSProperties,
-
-  subheadline: {
-    fontSize: "1.125rem",
-    color: colors.textMuted,
-    lineHeight: 1.65,
-    maxWidth: "600px",
-    margin: "0 auto 2.5rem",
-  } as React.CSSProperties,
-
-  problemLine: {
-    fontSize: "1rem",
-    color: colors.text,
-    lineHeight: 1.65,
-    maxWidth: "580px",
-    margin: "0 auto 2.5rem",
-    background: "#f0fdf4",
-    border: `1px solid #bbf7d0`,
-    borderRadius: "10px",
-    padding: "0.85rem 1.25rem",
-  } as React.CSSProperties,
-
-  ctaRow: {
-    display: "flex",
-    gap: "1rem",
-    justifyContent: "center",
-    flexWrap: "wrap" as const,
-    marginBottom: "1rem",
-  } as React.CSSProperties,
-
-  btnPrimary: {
-    background: colors.primary,
-    color: "#fff",
-    border: "none",
-    borderRadius: "10px",
-    padding: "0.85rem 2rem",
-    fontSize: "1rem",
-    fontWeight: 700,
-    cursor: "pointer",
-    textDecoration: "none",
-    display: "inline-block",
-  } as React.CSSProperties,
-
-  btnSecondary: {
-    background: "transparent",
-    color: colors.primary,
-    border: `2px solid ${colors.primary}`,
-    borderRadius: "10px",
-    padding: "0.85rem 2rem",
-    fontSize: "1rem",
-    fontWeight: 700,
-    cursor: "pointer",
-    textDecoration: "none",
-    display: "inline-block",
-  } as React.CSSProperties,
-
-  section: {
-    maxWidth: "900px",
-    margin: "0 auto",
-    padding: "4rem 2rem",
-  } as React.CSSProperties,
-
-  sectionAlt: {
-    background: colors.bgAlt,
-  } as React.CSSProperties,
-
-  sectionDark: {
-    background: colors.bgDark,
-    color: "#fff",
-  } as React.CSSProperties,
-
-  sectionTitle: {
-    fontSize: "1.75rem",
-    fontWeight: 800,
-    marginBottom: "0.5rem",
-    letterSpacing: "-0.02em",
-  } as React.CSSProperties,
-
-  sectionSubtitle: {
-    color: colors.textMuted,
-    fontSize: "1rem",
-    marginBottom: "2.5rem",
-  } as React.CSSProperties,
-
-  card: {
-    background: "#fff",
-    border: `1px solid ${colors.border}`,
-    borderRadius: "14px",
-    padding: "1.5rem",
-  } as React.CSSProperties,
-
-  metricCard: {
-    background: "#fff",
-    border: `1px solid ${colors.border}`,
-    borderRadius: "14px",
-    padding: "1.75rem 1.5rem",
-    textAlign: "center" as const,
-  } as React.CSSProperties,
-
-  grid2: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: "1.25rem",
-  } as React.CSSProperties,
-
-  grid3: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "1.25rem",
-  } as React.CSSProperties,
-
-  statusCard: {
-    background: "#fff",
-    border: `1px solid ${colors.border}`,
-    borderRadius: "14px",
-    padding: "1.25rem 1.75rem",
-    maxWidth: "540px",
-    margin: "0 auto",
-    boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
-  } as React.CSSProperties,
-
-  dot: (color: string) => ({
-    width: "10px",
-    height: "10px",
-    borderRadius: "50%",
-    background: color,
-    flexShrink: 0,
-    display: "inline-block",
-    marginRight: "0.5rem",
-    verticalAlign: "middle",
-  }) as React.CSSProperties,
-
-  stepNumber: {
-    width: "36px",
-    height: "36px",
-    borderRadius: "50%",
-    background: "#eff6ff",
-    color: colors.primary,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 800,
-    fontSize: "0.875rem",
-    flexShrink: 0,
-  } as React.CSSProperties,
-
-  tag: {
-    display: "inline-block",
-    background: "#eff6ff",
-    color: colors.primary,
-    border: `1px solid #bfdbfe`,
-    borderRadius: "8px",
-    padding: "0.35rem 0.85rem",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    margin: "0.25rem",
-  } as React.CSSProperties,
-
-  notificationBox: {
-    background: "#0f172a",
-    color: "#e2e8f0",
-    borderRadius: "14px",
-    padding: "1.5rem",
-    fontFamily: "monospace",
-    fontSize: "0.9rem",
-    lineHeight: 1.7,
-  } as React.CSSProperties,
-
-  highlight: (color: string) => ({
-    color,
-    fontWeight: 700,
-  }) as React.CSSProperties,
-
-  footer: {
-    background: colors.bgDark,
-    color: "#94a3b8",
-    textAlign: "center" as const,
-    padding: "2rem",
-    fontSize: "0.875rem",
-  } as React.CSSProperties,
-
-  chatBubbleCustomer: {
-    background: colors.primary,
-    color: "#fff",
-    borderRadius: "18px 18px 4px 18px",
-    padding: "0.65rem 1rem",
-    fontSize: "0.9rem",
-    maxWidth: "80%",
-    alignSelf: "flex-end",
-    marginLeft: "auto",
-  } as React.CSSProperties,
-
-  chatBubbleAssistant: {
-    background: "#f1f5f9",
-    color: colors.text,
-    borderRadius: "18px 18px 18px 4px",
-    padding: "0.65rem 1rem",
-    fontSize: "0.9rem",
-    maxWidth: "80%",
-  } as React.CSSProperties,
-
-  chatLabel: {
-    fontSize: "0.72rem",
-    fontWeight: 600,
-    color: colors.textMuted,
-    marginBottom: "0.25rem",
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.04em",
-  } as React.CSSProperties,
-
-  ownerAlert: {
-    background: "#fffbeb",
-    border: `1px solid #fcd34d`,
-    borderRadius: "10px",
-    padding: "0.75rem 1rem",
-    fontSize: "0.875rem",
-    fontWeight: 600,
-    color: "#92400e",
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-    marginTop: "0.5rem",
-  } as React.CSSProperties,
-};
-
-const industries = [
-  { icon: "✦", title: "Güzellik & Kuaför Salonları", desc: "Saç, tırnak, manikür ve pedikür randevuları" },
-  { icon: "✦", title: "Estetik & Medikal Merkezler", desc: "Botoks, dolgu, lazer ve cilt bakım klinikleri" },
-  { icon: "✦", title: "Diş Klinikleri", desc: "Kontrol, tedavi ve estetik diş randevuları" },
-  { icon: "✦", title: "Oto Detay & Bakım", desc: "Araç yıkama, detay ve bakım hizmetleri" },
-  { icon: "✦", title: "SPA & Masaj Merkezleri", desc: "Masaj, terapi ve wellness randevuları" },
-  { icon: "✦", title: "Özel Hizmet Sağlayıcılar", desc: "Evde hizmet, ziyaret ve serbest profesyoneller" },
+const pilotFeatures = [
+  "WhatsApp/Instagram konuşma akışı",
+  "Hizmet ve randevu bilgisi toplama",
+  "Google Sheets kaydı",
+  "Sıcak müşteri bildirimi",
+  "7 gün ayar ve iyileştirme",
 ];
 
-const steps = [
+const standartFeatures = [
+  "Tüm Pilot özellikleri",
+  "Lead scoring",
+  "Takip mesajları",
+  "Aylık performans özeti",
+  "Daha gelişmiş konuşma senaryoları",
+];
+
+const klinikFeatures = [
+  "Çoklu hizmet senaryoları",
+  "Personel yönlendirme",
+  "Gelişmiş bildirim sistemi",
+  "Yurtdışı hasta/müşteri akışları",
+  "Öncelikli destek",
+];
+
+const faqs = [
   {
-    n: "1",
-    title: "Müşteri Mesaj Atar",
-    desc: "WhatsApp veya Instagram'dan gelen müşteri, sizin numaranıza veya hesabınıza mesaj yazar.",
+    q: "Yapay zeka yanlış fiyat söyler mi?",
+    a: "Hayır. Sistem yalnızca işletmenin verdiği fiyat aralıklarını ve onaylı bilgileri kullanır. Emin olmadığı durumda müşteriyi işletmeye yönlendirir.",
   },
   {
-    n: "2",
-    title: "Asistan Karşılar",
-    desc: "Sistem müşteriyi sıcak ve profesyonel bir şekilde karşılar; adını, hizmet talebini ve tercihlerini tek tek sorar.",
+    q: "Kurulum ne kadar sürer?",
+    a: "İlk kurulum genellikle 1-2 gün içinde tamamlanır. Hizmetleriniz, fiyat aralıklarınız ve sık sorulan sorularınız alınarak sistem size özel hazırlanır.",
   },
   {
-    n: "3",
-    title: "Bilgiler Toplanır",
-    desc: "Ad, hizmet, tercih edilen tarih/saat, konum ve aciliyet otomatik olarak kayıt altına alınır.",
+    q: "Müşteri verileri güvende mi?",
+    a: "Müşteri bilgileri yalnızca randevu ve iletişim amacıyla toplanır. KVKK'ya uygun şekilde saklanması için gerekli yapı kurulur.",
   },
   {
-    n: "4",
-    title: "Ekibe Bildirim",
-    desc: "Tüm bilgiler Google Sheets'e işlenir ve işletme sahibine anlık SMS bildirimi gönderilir.",
+    q: "Sistem müşteriye tıbbi tavsiye verir mi?",
+    a: "Hayır. Sistem tıbbi tavsiye veya teşhis vermez. Estetik/klinik konularda müşteriyi ön görüşmeye veya uzman ekibe yönlendirir.",
+  },
+  {
+    q: "İstediğim zaman iptal edebilir miyim?",
+    a: "Evet. Pilot müşteriler için esnek aylık kullanım sunulur.",
   },
 ];
 
-const collectedFields = [
-  "Ad / Soyad",
-  "Telefon Numarası",
-  "İstenen Hizmet",
-  "Tercih Edilen Tarih",
-  "Tercih Edilen Saat",
-  "Konum / Şube Tercihi",
-  "Aciliyet Seviyesi",
-  "Kanal (WhatsApp / SMS)",
-  "Lead Skoru (Sıcak / Ilık / Soğuk)",
-  "Ek Not / Müşteri Yorumu",
+const demoMessages = [
+  { who: "customer", name: "Zeynep", text: "Merhaba, tüm vücut lazer epilasyon fiyatı ne kadar?" },
+  { who: "assistant", name: "RandevuFlow", text: "Merhaba! Size yardımcı olalım. Tüm vücut lazer paketleri seans sayısı ve kampanyaya göre değişebilir. Daha önce lazer epilasyon yaptırdınız mı?" },
+  { who: "customer", name: "Zeynep", text: "Hayır, ilk kez yaptıracağım." },
+  { who: "assistant", name: "RandevuFlow", text: "Anladım. İlk kez gelen danışanlar için ön görüşme ve cilt analizi öneriyoruz. Bu hafta hangi gün sizin için uygun olur?" },
+  { who: "customer", name: "Zeynep", text: "Cumartesi olabilir." },
+  { who: "assistant", name: "RandevuFlow", text: "Harika. Cumartesi için ön kayıt oluşturalım. İsminizi ve telefon numaranızı alabilir miyiz?" },
+  { who: "customer", name: "Zeynep", text: "Zeynep, 0532 xxx xx xx." },
+  { who: "assistant", name: "RandevuFlow", text: "Teşekkürler Zeynep Hanım. Cumartesi için randevu talebinizi aldık. Merkezimiz uygun saat bilgisini paylaşmak ve ön kaydınızı onaylamak için size kısa süre içinde dönüş yapacak." },
 ];
 
-const metrics = [
-  {
-    icon: "⚡",
-    title: "Anında cevap",
-    desc: "Müşteri yazdığı anda karşılanır. Siz müsait olmadığınızda bile hiçbir müşteri cevapsız kalmaz.",
-  },
-  {
-    icon: "📋",
-    title: "Daha düzenli takip",
-    desc: "Tüm talepler tek tabloda toplanır. Kim ne istedi, ne zaman yazdı — hepsi gözünüzün önünde.",
-  },
-  {
-    icon: "🔔",
-    title: "Sıcak lead bildirimi",
-    desc: "Randevuya yakın müşteriler ekibe anında iletilir. En önemli leadleri kaçırmazsınız.",
-  },
+const notifRows: [string, string][] = [
+  ["İsim", "Zeynep"],
+  ["Hizmet", "Tüm vücut lazer epilasyon"],
+  ["Durum", "İlk kez yaptıracak"],
+  ["Zaman", "Cumartesi"],
+  ["Telefon", "0532 xxx xx xx"],
+  ["Lead skoru", "Yüksek"],
+  ["Öneri", "Hızlı dönüş yapılmalı"],
 ];
-
-const PILOT_EMAIL = "yigitalpyazici53@gmail.com";
 
 export default function Home() {
   return (
-    <div style={styles.page}>
-      {/* ── Nav ── */}
-      <nav style={styles.nav}>
-        <span style={styles.logo}>RandevuFlow</span>
-        <a
-          href={`mailto:${PILOT_EMAIL}?subject=RandevuFlow%20Pilot%20Ba%C5%9Fvurusu`}
-          style={styles.navCta}
-        >
-          Pilot Başvurusu
+    <div
+      className={outfit.className}
+      style={{ background: C.bg, color: C.text, minHeight: "100dvh" }}
+    >
+      <style>{`
+        *, *::before, *::after { box-sizing: border-box; }
+
+        .hero-grid {
+          display: grid;
+          grid-template-columns: 1.1fr 0.9fr;
+          gap: 3.5rem;
+          align-items: center;
+          max-width: 1180px;
+          margin: 0 auto;
+          padding: 5rem 2.5rem 4.5rem;
+        }
+        @media (max-width: 900px) {
+          .hero-grid { grid-template-columns: 1fr; gap: 0; padding: 3.5rem 1.5rem 3rem; }
+          .hero-right { display: none !important; }
+        }
+
+        .features-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 1.25rem;
+          margin-top: 2.5rem;
+        }
+        @media (max-width: 640px) {
+          .features-grid { grid-template-columns: 1fr; }
+        }
+
+        .pricing-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1.5rem;
+          margin-top: 2.5rem;
+        }
+        @media (max-width: 900px) {
+          .pricing-grid { grid-template-columns: 1fr; max-width: 460px; margin-left: auto; margin-right: auto; }
+        }
+
+        .btn-wa {
+          background: ${C.whatsapp};
+          color: #fff;
+          border: none;
+          border-radius: 10px;
+          padding: 0.95rem 2.25rem;
+          font-size: 1rem;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: inline-block;
+          transition: background 0.2s, transform 0.15s;
+          white-space: nowrap;
+          line-height: 1;
+        }
+        .btn-wa:hover { background: #1da851; transform: translateY(-1px); }
+        .btn-wa:active { transform: translateY(0); }
+
+        .btn-wa-lg {
+          background: ${C.whatsapp};
+          color: #fff;
+          border: none;
+          border-radius: 10px;
+          padding: 1rem 2.5rem;
+          font-size: 1.05rem;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: inline-block;
+          transition: background 0.2s, transform 0.15s;
+          white-space: nowrap;
+          line-height: 1;
+        }
+        .btn-wa-lg:hover { background: #1da851; transform: translateY(-1px); }
+        .btn-wa-lg:active { transform: translateY(0); }
+
+        .btn-pilot-cta {
+          background: ${C.teal};
+          color: #fff;
+          border: none;
+          border-radius: 10px;
+          padding: 0.875rem 1.75rem;
+          font-size: 0.95rem;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: block;
+          width: 100%;
+          text-align: center;
+          transition: background 0.2s, transform 0.15s;
+          white-space: nowrap;
+        }
+        .btn-pilot-cta:hover { background: ${C.tealHover}; transform: translateY(-1px); }
+        .btn-pilot-cta:active { transform: translateY(0); }
+
+        .btn-outline-cta {
+          background: transparent;
+          color: ${C.teal};
+          border: 1.5px solid ${C.teal};
+          border-radius: 10px;
+          padding: 0.875rem 1.75rem;
+          font-size: 0.95rem;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: block;
+          width: 100%;
+          text-align: center;
+          transition: background 0.2s, transform 0.15s;
+          white-space: nowrap;
+        }
+        .btn-outline-cta:hover { background: ${C.tealBg}; transform: translateY(-1px); }
+        .btn-outline-cta:active { transform: translateY(0); }
+
+        .nav-cta {
+          background: ${C.whatsapp};
+          color: #fff;
+          border: none;
+          border-radius: 8px;
+          padding: 0.55rem 1.2rem;
+          font-size: 0.875rem;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: inline-block;
+          transition: background 0.2s;
+          white-space: nowrap;
+        }
+        .nav-cta:hover { background: #1da851; }
+
+        .feature-card { transition: box-shadow 0.2s; }
+        .feature-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,0.09); }
+
+        .pricing-card { transition: box-shadow 0.2s, transform 0.2s; }
+        .pricing-card:hover { box-shadow: 0 12px 40px rgba(0,0,0,0.11); transform: translateY(-2px); }
+
+        .faq-card { transition: border-color 0.2s; }
+        .faq-card:hover { border-color: ${C.tealBorder} !important; }
+
+        .sticky-wa {
+          position: fixed;
+          bottom: 1.5rem;
+          right: 1.5rem;
+          z-index: 100;
+          background: ${C.whatsapp};
+          color: #fff;
+          border-radius: 999px;
+          padding: 0.75rem 1.4rem;
+          font-weight: 700;
+          font-size: 0.9rem;
+          text-decoration: none;
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          box-shadow: 0 4px 18px rgba(37,211,102,0.42);
+          transition: background 0.2s, transform 0.15s;
+          white-space: nowrap;
+        }
+        .sticky-wa:hover { background: #1da851; transform: translateY(-1px); }
+      `}</style>
+
+      {/* Nav */}
+      <nav
+        style={{
+          padding: "0 2.5rem",
+          height: "64px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: `1px solid ${C.border}`,
+          background: "rgba(255,255,255,0.96)",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+        }}
+      >
+        <span style={{ fontSize: "1.2rem", fontWeight: 800, color: C.teal, letterSpacing: "-0.035em" }}>
+          RandevuFlow
+        </span>
+        <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="nav-cta">
+          Demo iste
         </a>
       </nav>
 
-      {/* ── Hero ── */}
-      <div style={styles.hero}>
-        <span style={styles.badge}>Türkiye&rsquo;deki Hizmet İşletmeleri İçin</span>
-        <h1 style={styles.h1}>
-          WhatsApp ve Instagram&rsquo;dan gelen müşterileri randevu talebine çevirin.
-        </h1>
-        <p style={styles.subheadline}>
-          Güzellik salonları, estetik merkezleri, diş klinikleri ve oto servisler için
-          akıllı müşteri karşılama, bilgi toplama ve lead takip sistemi.
-        </p>
-        <p style={styles.problemLine}>
-          Geç cevap yüzünden kaçan müşterileri otomatik karşılayın, bilgilerini toplayın
-          ve ekibinize hazır randevu talebi olarak iletin.
-        </p>
-        <div style={styles.ctaRow}>
-          <a
-            href={`mailto:${PILOT_EMAIL}?subject=RandevuFlow%20Pilot%20Ba%C5%9Fvurusu`}
-            style={styles.btnPrimary}
-          >
-            Pilot işletme olmak istiyorum
-          </a>
-          <a href="#demo" style={styles.btnSecondary}>Demo akışını gör</a>
-        </div>
-
-        {/* Status card — no internal API paths shown to visitors */}
-        <div style={{ ...styles.statusCard, marginTop: "2.5rem" }}>
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: "0.4rem" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
-              <span style={styles.dot(colors.green)} />
-              Sistem durumu: Aktif
-            </div>
-            <div style={{ fontSize: "0.82rem", color: colors.textMuted }}>
-              Kanallar: WhatsApp / SMS / Instagram yönlendirme
-            </div>
-            <div style={{ fontSize: "0.82rem", color: colors.textMuted }}>
-              Kayıt: Google Sheets / CRM
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Neden değerli? ── */}
-      <div style={styles.sectionAlt}>
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Neden işletmeler için değerli?</h2>
-          <p style={styles.sectionSubtitle}>
-            Rakipleriniz cevap vermeden önce siz orada olun.
-          </p>
-          <div style={styles.grid3}>
-            {metrics.map((m) => (
-              <div key={m.title} style={styles.metricCard}>
-                <div style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>{m.icon}</div>
-                <div style={{ fontWeight: 800, fontSize: "1.1rem", marginBottom: "0.5rem" }}>
-                  {m.title}
-                </div>
-                <div style={{ fontSize: "0.875rem", color: colors.textMuted, lineHeight: 1.6 }}>
-                  {m.desc}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Kimler için? ── */}
-      <div>
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Kimler için?</h2>
-          <p style={styles.sectionSubtitle}>
-            WhatsApp ve Instagram&rsquo;dan müşteri alan her hizmet işletmesi için uygundur.
-          </p>
-          <div style={styles.grid3}>
-            {industries.map((item) => (
-              <div key={item.title} style={styles.card}>
-                <div style={{ fontSize: "1.25rem", color: colors.primary, marginBottom: "0.5rem" }}>
-                  {item.icon}
-                </div>
-                <div style={{ fontWeight: 700, marginBottom: "0.35rem" }}>{item.title}</div>
-                <div style={{ fontSize: "0.875rem", color: colors.textMuted }}>{item.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Demo konuşma örneği ── */}
-      <div id="demo" style={styles.sectionAlt}>
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Demo konuşma örneği</h2>
-          <p style={styles.sectionSubtitle}>
-            Gerçek bir müşteri etkileşimi nasıl görünür? İşte canlı bir örnek.
-          </p>
-          <div
-            style={{
-              ...styles.card,
-              maxWidth: "520px",
-              margin: "0 auto",
-              display: "flex",
-              flexDirection: "column" as const,
-              gap: "1rem",
-            }}
-          >
-            {/* Customer message 1 */}
-            <div>
-              <div style={{ ...styles.chatLabel, textAlign: "right" }}>Müşteri</div>
-              <div style={styles.chatBubbleCustomer}>
-                Merhaba lazer epilasyon fiyat alabilir miyim?
-              </div>
-            </div>
-
-            {/* Assistant response 1 */}
-            <div>
-              <div style={styles.chatLabel}>RandevuFlow Asistanı</div>
-              <div style={styles.chatBubbleAssistant}>
-                Merhaba, yardımcı olalım. Hangi bölge için bilgi almak istersiniz?
-              </div>
-            </div>
-
-            {/* Customer message 2 */}
-            <div>
-              <div style={{ ...styles.chatLabel, textAlign: "right" }}>Müşteri</div>
-              <div style={styles.chatBubbleCustomer}>
-                Tüm vücut ve cumartesi uygun olur.
-              </div>
-            </div>
-
-            {/* Assistant response 2 */}
-            <div>
-              <div style={styles.chatLabel}>RandevuFlow Asistanı</div>
-              <div style={styles.chatBubbleAssistant}>
-                Harika. Adınızı ve size ulaşabileceğimiz telefon numarasını paylaşır mısınız?
-              </div>
-            </div>
-
-            {/* Owner alert */}
-            <div style={styles.ownerAlert}>
-              <span>🔔</span>
-              <span>
-                <strong>İşletme sahibi bildirimi:</strong> Yeni sıcak lead — Lazer epilasyon / Cumartesi /{" "}
-                <span style={{ color: "#b45309" }}>HOT</span>
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Nasıl çalışır? ── */}
-      <div id="nasil-calisir">
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Nasıl çalışır?</h2>
-          <p style={styles.sectionSubtitle}>
-            Teknik karmaşayla uğraşmadan işletmenizin mevcut müşteri akışına bağlanır.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: "1.25rem" }}>
-            {steps.map((step) => (
-              <div
-                key={step.n}
-                style={{ ...styles.card, display: "flex", gap: "1.25rem", alignItems: "flex-start" }}
-              >
-                <div style={styles.stepNumber}>{step.n}</div>
-                <div>
-                  <div style={{ fontWeight: 700, marginBottom: "0.25rem" }}>{step.title}</div>
-                  <div style={{ fontSize: "0.9rem", color: colors.textMuted }}>{step.desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Toplanan bilgiler ── */}
-      <div style={styles.sectionAlt}>
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Toplanan bilgiler</h2>
-          <p style={styles.sectionSubtitle}>
-            Her konuşmadan otomatik olarak çıkarılan lead verileri.
-          </p>
+      {/* Hero */}
+      <section>
+        <div className="hero-grid">
+          {/* Left */}
           <div>
-            {collectedFields.map((field) => (
-              <span key={field} style={styles.tag}>
-                {field}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                background: C.tealBg,
+                color: C.teal,
+                fontSize: "0.8rem",
+                fontWeight: 700,
+                padding: "0.35rem 0.9rem",
+                borderRadius: "999px",
+                marginBottom: "1.75rem",
+                border: `1px solid ${C.tealBorder}`,
+              }}
+            >
+              Lazer epilasyon ve estetik merkezleri
+            </div>
 
-      {/* ── Bildirim örneği ── */}
-      <div>
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>İşletmeye gelen bildirim örneği</h2>
-          <p style={styles.sectionSubtitle}>
-            Müşteri konuşma tamamlandığında işletme sahibine şu formatta SMS gider.
-          </p>
-          <div style={styles.notificationBox}>
-            <div>
-              <span style={styles.highlight("#94a3b8")}>[RF] </span>
-              <span style={styles.highlight("#34d399")}>+905xx xxx xx xx</span>
-              <span style={{ color: "#f59e0b", fontWeight: 700 }}> HOT</span>
-            </div>
-            <div style={{ marginTop: "0.5rem" }}>
-              <span style={styles.highlight("#93c5fd")}>Hizmet: </span>
-              kalıcı manikür
-            </div>
-            <div>
-              <span style={styles.highlight("#93c5fd")}>Tarih: </span>
-              yarın öğleden sonra
-            </div>
-            <div>
-              <span style={styles.highlight("#93c5fd")}>Ad: </span>
-              Ayşe
-            </div>
-            <div style={{ marginTop: "0.75rem", color: "#64748b", fontSize: "0.8rem" }}>
-              → Sheets&rsquo;e kaydedildi · Durum: in_progress
-            </div>
-          </div>
-          <div style={{ marginTop: "1.25rem", display: "flex", gap: "1rem", flexWrap: "wrap" as const }}>
-            <div style={{ ...styles.card, flex: 1, minWidth: "220px" }}>
-              <div style={{ fontWeight: 700, marginBottom: "0.25rem" }}>Google Sheets</div>
-              <div style={{ fontSize: "0.875rem", color: colors.textMuted }}>
-                Tüm leadlar otomatik olarak spreadsheet&rsquo;e işlenir. Ekip gerçek zamanlı takip eder.
-              </div>
-            </div>
-            <div style={{ ...styles.card, flex: 1, minWidth: "220px" }}>
-              <div style={{ fontWeight: 700, marginBottom: "0.25rem" }}>SMS Bildirimi</div>
-              <div style={{ fontSize: "0.875rem", color: colors.textMuted }}>
-                İşletme sahibi her yeni sıcak lead için anında SMS bildirimi alır.
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+            <h1
+              style={{
+                fontSize: "clamp(1.85rem, 4.2vw, 2.75rem)",
+                fontWeight: 800,
+                lineHeight: 1.15,
+                color: C.text,
+                marginBottom: "1.25rem",
+                letterSpacing: "-0.03em",
+              }}
+            >
+              Instagram ve WhatsApp mesajlarını daha hızlı randevu talebine dönüştürün.
+            </h1>
 
-      {/* ── Pilot teklifi ── */}
-      <div id="pilot" style={styles.sectionAlt}>
-        <div style={{ ...styles.section, textAlign: "center" }}>
-          <span style={styles.badgeAmber}>Sınırlı Kontenjan — İlk 10 İşletme</span>
-          <h2 style={{ ...styles.sectionTitle, marginTop: "0.5rem" }}>
-            İlk 10 pilot işletme için özel kurulum teklifi
-          </h2>
-          <p style={{ ...styles.subheadline, margin: "0 auto 2rem" }}>
-            Sistemi gerçek müşteri akışınızda test edin.
-            Kurulum, kişiselleştirme ve ilk optimizasyon bizden.
-          </p>
-          <div style={{ ...styles.card, maxWidth: "520px", margin: "0 auto 2rem", textAlign: "left" }}>
-            {[
-              "WhatsApp veya SMS entegrasyonu",
-              "Türkçe AI asistan kişiselleştirme",
-              "Google Sheets lead tablosu",
-              "İşletme sahibine SMS bildirimleri",
-              "Pilot süresince tam destek, sonrasında aylık sabit ücret",
-            ].map((item) => (
+            <p
+              style={{
+                fontSize: "1.05rem",
+                color: C.textMuted,
+                lineHeight: 1.7,
+                marginBottom: "2rem",
+                maxWidth: "520px",
+              }}
+            >
+              RandevuFlow, lazer epilasyon ve estetik merkezleri için gelen &ldquo;fiyat?&rdquo; mesajlarını saniyeler içinde karşılar, müşteri bilgilerini toplar ve sıcak randevu taleplerini işletmenize bildirir.
+            </p>
+
+            <div style={{ marginBottom: "1.5rem" }}>
+              <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-wa">
+                WhatsApp&rsquo;tan demo isteyin
+              </a>
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem 1rem", fontSize: "0.8rem", color: C.textMuted }}>
+              {["7/24 yanıt", "Sıcak müşteri bildirimi", "Google Sheets/CRM kaydı"].map((t) => (
+                <span key={t} style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  <span style={{ width: "5px", height: "5px", borderRadius: "50%", background: C.teal, display: "inline-block", flexShrink: 0 }} />
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Right - preview cards */}
+          <div className="hero-right" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {/* Mini WhatsApp conversation */}
+            <div
+              style={{
+                background: "#fff",
+                border: `1px solid ${C.border}`,
+                borderRadius: "20px",
+                overflow: "hidden",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)",
+              }}
+            >
               <div
-                key={item}
                 style={{
+                  background: C.whatsapp,
+                  color: "#fff",
+                  padding: "0.7rem 1rem",
                   display: "flex",
                   alignItems: "center",
-                  gap: "0.75rem",
-                  padding: "0.6rem 0",
-                  borderBottom: `1px solid ${colors.border}`,
+                  gap: "0.6rem",
                 }}
               >
-                <span style={{ color: colors.green, fontWeight: 700 }}>✓</span>
-                <span style={{ fontSize: "0.95rem" }}>{item}</span>
+                <div
+                  style={{
+                    width: "30px",
+                    height: "30px",
+                    borderRadius: "50%",
+                    background: "rgba(255,255,255,0.22)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.85rem",
+                    flexShrink: 0,
+                  }}
+                >
+                  💆
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "0.82rem", lineHeight: 1.2 }}>Estetik Merkeziniz</div>
+                  <div style={{ fontSize: "0.68rem", opacity: 0.85 }}>cevap veriyor...</div>
+                </div>
+              </div>
+              <div
+                style={{
+                  background: "#f0f2f5",
+                  padding: "0.85rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.55rem",
+                }}
+              >
+                {[
+                  { right: true, text: "Merhaba, lazer fiyat?" },
+                  { right: false, text: "Merhaba! Hangi bölge için bilgi almak istersiniz?" },
+                  { right: true, text: "Tüm vücut" },
+                  { right: false, text: "Harika. Bu hafta hangi gün uygunsunuz?" },
+                ].map((m, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: m.right ? "flex-end" : "flex-start" }}>
+                    <div
+                      style={{
+                        background: m.right ? "#dcf8c6" : "#fff",
+                        color: C.text,
+                        borderRadius: m.right ? "12px 12px 3px 12px" : "12px 12px 12px 3px",
+                        padding: "0.45rem 0.8rem",
+                        fontSize: "0.82rem",
+                        maxWidth: "80%",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {m.text}
+                    </div>
+                  </div>
+                ))}
+                {/* Typing dots */}
+                <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                  <div
+                    style={{
+                      background: "#fff",
+                      borderRadius: "12px 12px 12px 3px",
+                      padding: "0.5rem 0.75rem",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                      display: "flex",
+                      gap: "3px",
+                      alignItems: "center",
+                    }}
+                  >
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#94a3b8" }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Hot lead notification */}
+            <div
+              style={{
+                background: C.bgDark,
+                borderRadius: "16px",
+                padding: "1.1rem 1.25rem",
+                boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.85rem" }}>
+                <span style={{ fontSize: "0.85rem" }}>🔥</span>
+                <span style={{ color: C.amber, fontWeight: 700, fontSize: "0.8rem" }}>Yeni sıcak müşteri</span>
+                <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "#475569" }}>2dk önce</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.28rem", fontSize: "0.82rem" }}>
+                {([ ["İsim", "Zeynep K."], ["Hizmet", "Tüm vücut lazer"], ["Zaman", "Cumartesi"], ["Skor", "Yüksek"] ] as [string,string][]).map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", gap: "0.5rem" }}>
+                    <span style={{ color: "#475569", minWidth: "55px" }}>{k}:</span>
+                    <span style={{ color: k === "Skor" ? "#34d399" : "#e2e8f0", fontWeight: k === "Skor" ? 700 : 400 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Problem */}
+      <section style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ maxWidth: "860px", margin: "0 auto", padding: "5rem 2.5rem" }}>
+          <h2
+            style={{
+              fontSize: "clamp(1.55rem, 3.2vw, 2.05rem)",
+              fontWeight: 800,
+              letterSpacing: "-0.025em",
+              marginBottom: "1rem",
+              color: C.text,
+              lineHeight: 1.25,
+            }}
+          >
+            Geç cevaplanan her &ldquo;fiyat?&rdquo; mesajı kayıp müşteri olabilir.
+          </h2>
+          <p style={{ fontSize: "1.05rem", color: C.textMuted, lineHeight: 1.7, marginBottom: "2.25rem", maxWidth: "560px" }}>
+            Siz işlemdeyken müşteri beklemez. Cevap gecikirse başka merkeze yazar. RandevuFlow, özellikle akşam, hafta sonu ve yoğun saatlerde gelen talepleri kaçırmamanız için çalışır.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", maxWidth: "500px" }}>
+            {[
+              "Geç cevaplanan DM'ler",
+              "Takipsiz kalan fiyat soruları",
+              "Yoğun saatlerde unutulan randevu talepleri",
+            ].map((p) => (
+              <div
+                key={p}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${C.red}`,
+                  borderRadius: "10px",
+                  padding: "0.85rem 1.1rem",
+                  fontSize: "0.95rem",
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.65rem",
+                  color: C.text,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
+                  <circle cx="7" cy="7" r="7" fill="#fef2f2" />
+                  <path d="M4.5 4.5l5 5M9.5 4.5l-5 5" stroke={C.red} strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                {p}
               </div>
             ))}
           </div>
-          <a
-            href={`mailto:${PILOT_EMAIL}?subject=RandevuFlow%20Pilot%20Ba%C5%9Fvurusu`}
-            style={{ ...styles.btnPrimary, fontSize: "1.05rem", padding: "1rem 2.5rem" }}
-          >
-            Pilot işletme olmak istiyorum
-          </a>
         </div>
-      </div>
+      </section>
 
-      {/* ── CTA ── */}
-      <div style={{ background: colors.bgDark }}>
-        <div style={{ ...styles.section, textAlign: "center" }}>
-          <h2 style={{ ...styles.sectionTitle, color: "#fff", marginBottom: "0.75rem" }}>
-            Hazır mısınız?
+      {/* Solution / Features */}
+      <section>
+        <div style={{ maxWidth: "960px", margin: "0 auto", padding: "5rem 2.5rem" }}>
+          <h2
+            style={{
+              fontSize: "clamp(1.55rem, 3.2vw, 2.05rem)",
+              fontWeight: 800,
+              letterSpacing: "-0.025em",
+              marginBottom: "0.65rem",
+              color: C.text,
+            }}
+          >
+            RandevuFlow nasıl çalışır?
           </h2>
-          <p style={{ color: "#94a3b8", fontSize: "1rem", marginBottom: "2rem" }}>
-            WhatsApp ve Instagram&rsquo;dan gelen her müşteriyi doğru şekilde karşılayın.
+          <p style={{ fontSize: "1rem", color: C.textMuted, lineHeight: 1.65, maxWidth: "500px" }}>
+            Müşteri mesaj atar, sistem devreye girer. Siz yalnızca hazır randevu taleplerini alırsınız.
           </p>
-          <a
-            href={`mailto:${PILOT_EMAIL}?subject=RandevuFlow%20Pilot%20Ba%C5%9Fvurusu`}
-            style={styles.btnPrimary}
+          <div className="features-grid">
+            {[
+              { icon: "⚡", title: "Anında cevap", desc: "Gelen mesajlara saniyeler içinde yanıt verir." },
+              { icon: "🎯", title: "Müşteri niteleme", desc: "Hangi işlemle ilgilendiğini, ne zaman gelmek istediğini ve iletişim bilgisini toplar." },
+              { icon: "🔥", title: "Sıcak lead bildirimi", desc: "Randevuya yakın müşterileri işletmeye anında bildirir." },
+              { icon: "💬", title: "Takip mesajları", desc: "Cevap vermeyen müşterilere nazik hatırlatma yapar." },
+            ].map((f) => (
+              <div
+                key={f.title}
+                className="feature-card"
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: "16px",
+                  padding: "1.5rem",
+                }}
+              >
+                <div
+                  style={{
+                    width: "44px",
+                    height: "44px",
+                    borderRadius: "12px",
+                    background: C.tealBg,
+                    border: `1px solid ${C.tealBorder}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.2rem",
+                    marginBottom: "1rem",
+                    flexShrink: 0,
+                  }}
+                >
+                  {f.icon}
+                </div>
+                <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.4rem", color: C.text }}>{f.title}</div>
+                <div style={{ fontSize: "0.9rem", color: C.textMuted, lineHeight: 1.65 }}>{f.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Demo Conversation */}
+      <section id="demo" style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ maxWidth: "620px", margin: "0 auto", padding: "5rem 2.5rem", textAlign: "center" }}>
+          <h2
+            style={{
+              fontSize: "clamp(1.55rem, 3.2vw, 2.05rem)",
+              fontWeight: 800,
+              letterSpacing: "-0.025em",
+              marginBottom: "0.65rem",
+              color: C.text,
+            }}
           >
-            Pilot işletme olmak istiyorum
+            Gerçek bir fiyat sorusu nasıl randevuya dönüşür?
+          </h2>
+          <p style={{ fontSize: "1rem", color: C.textMuted, lineHeight: 1.65, marginBottom: "2.5rem", maxWidth: "460px", margin: "0 auto 2.5rem" }}>
+            Aşağıdaki konuşma tamamen otomatik gerçekleşir. Siz işlemdeyken bile.
+          </p>
+
+          <div
+            style={{
+              background: "#fff",
+              border: `1px solid ${C.border}`,
+              borderRadius: "20px",
+              overflow: "hidden",
+              boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04)",
+              textAlign: "left",
+            }}
+          >
+            <div
+              style={{
+                background: C.whatsapp,
+                color: "#fff",
+                padding: "0.9rem 1.25rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+              }}
+            >
+              <div
+                style={{
+                  width: "34px",
+                  height: "34px",
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.22)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1rem",
+                  flexShrink: 0,
+                }}
+              >
+                💆
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>Güzellik ve Estetik Merkezi</div>
+                <div style={{ fontSize: "0.72rem", opacity: 0.85 }}>cevap veriyor...</div>
+              </div>
+            </div>
+            <div
+              style={{
+                padding: "1.25rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.85rem",
+                background: "#f0f2f5",
+              }}
+            >
+              {demoMessages.map((msg, i) => {
+                const isCustomer = msg.who === "customer";
+                return (
+                  <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: isCustomer ? "flex-end" : "flex-start" }}>
+                    <div
+                      style={{
+                        fontSize: "0.67rem",
+                        fontWeight: 600,
+                        color: "#6b7280",
+                        marginBottom: "3px",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      {msg.name}
+                    </div>
+                    <div
+                      style={{
+                        background: isCustomer ? "#dcf8c6" : "#fff",
+                        color: C.text,
+                        borderRadius: isCustomer ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                        padding: "0.65rem 1rem",
+                        fontSize: "0.9rem",
+                        maxWidth: "82%",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {msg.text}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Notification card */}
+          <div
+            style={{
+              background: C.bgDark,
+              color: "#e2e8f0",
+              borderRadius: "16px",
+              padding: "1.35rem 1.5rem",
+              marginTop: "1.25rem",
+              fontSize: "0.9rem",
+              lineHeight: 1.75,
+              boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
+              textAlign: "left",
+              border: "1px solid rgba(255,255,255,0.06)",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.85rem", color: C.amber, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <span>🔥</span>
+              <span>Yeni sıcak müşteri</span>
+            </div>
+            {notifRows.map(([k, v]) => (
+              <div key={k} style={{ display: "flex", gap: "0.5rem", lineHeight: 1.8 }}>
+                <span style={{ color: "#475569", minWidth: "110px", fontSize: "0.85rem" }}>{k}:</span>
+                <span style={{ fontWeight: k === "Öneri" ? 700 : 400, color: k === "Lead skoru" ? "#34d399" : "#e2e8f0" }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing */}
+      <section id="fiyat">
+        <div style={{ maxWidth: "1060px", margin: "0 auto", padding: "5rem 2.5rem" }}>
+          <h2
+            style={{
+              fontSize: "clamp(1.55rem, 3.2vw, 2.05rem)",
+              fontWeight: 800,
+              letterSpacing: "-0.025em",
+              marginBottom: "0.65rem",
+              color: C.text,
+            }}
+          >
+            İlk kurucu müşterilere özel pilot fiyat
+          </h2>
+          <p style={{ fontSize: "1rem", color: C.textMuted, lineHeight: 1.65, maxWidth: "500px" }}>
+            Sistemi gerçek müşteri akışınızda test edin. Kurulum, kişiselleştirme ve ilk optimizasyon sizin için yapılır.
+          </p>
+
+          <div className="pricing-grid">
+            {/* Pilot - Featured */}
+            <div
+              className="pricing-card"
+              style={{
+                background: C.bgDark,
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: "20px",
+                padding: "2rem 1.75rem",
+                display: "flex",
+                flexDirection: "column",
+                position: "relative",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: "3px",
+                  background: `linear-gradient(to right, ${C.teal}, #6ee7b7)`,
+                }}
+              />
+              <div
+                style={{
+                  display: "inline-block",
+                  background: "rgba(13,148,136,0.22)",
+                  color: "#5eead4",
+                  fontSize: "0.7rem",
+                  fontWeight: 700,
+                  padding: "0.28rem 0.75rem",
+                  borderRadius: "999px",
+                  marginBottom: "1rem",
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  border: "1px solid rgba(13,148,136,0.32)",
+                  width: "fit-content",
+                }}
+              >
+                İlk 3 işletmeye özel
+              </div>
+              <div style={{ fontWeight: 800, fontSize: "1.2rem", marginBottom: "0.3rem", color: "#f1f5f9" }}>
+                Pilot Paket
+              </div>
+              <div style={{ fontSize: "0.9rem", color: "#475569", marginBottom: "1.5rem" }}>
+                Sistemi deneyin, sonuçları görün.
+              </div>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <div style={{ fontSize: "0.73rem", color: "#475569", fontWeight: 500, marginBottom: "0.15rem" }}>Kurulum</div>
+                <div style={{ fontWeight: 800, fontSize: "1.8rem", color: "#f1f5f9", letterSpacing: "-0.03em" }}>3.500 TL</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "0.73rem", color: "#475569", fontWeight: 500, marginBottom: "0.15rem" }}>Aylık</div>
+                <div style={{ fontWeight: 800, fontSize: "1.8rem", color: "#f1f5f9", letterSpacing: "-0.03em" }}>3.500 TL</div>
+              </div>
+              <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "1.25rem 0" }} />
+              <CheckList items={pilotFeatures} white />
+              <div style={{ marginTop: "auto" }}>
+                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-pilot-cta">
+                  Başlamak istiyorum
+                </a>
+              </div>
+            </div>
+
+            {/* Standart */}
+            <div
+              className="pricing-card"
+              style={{
+                background: "#fff",
+                border: `1px solid ${C.border}`,
+                borderRadius: "20px",
+                padding: "2rem 1.75rem",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <div style={{ fontWeight: 800, fontSize: "1.2rem", marginBottom: "0.3rem", color: C.text }}>
+                Standart Paket
+              </div>
+              <div style={{ fontSize: "0.9rem", color: C.textMuted, marginBottom: "1.5rem" }}>
+                Tam özellikli, ölçeklenebilir.
+              </div>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <div style={{ fontSize: "0.73rem", color: C.textMuted, fontWeight: 500, marginBottom: "0.15rem" }}>Kurulum</div>
+                <div style={{ fontWeight: 800, fontSize: "1.8rem", color: C.text, letterSpacing: "-0.03em" }}>10.000 TL</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "0.73rem", color: C.textMuted, fontWeight: 500, marginBottom: "0.15rem" }}>Aylık</div>
+                <div style={{ fontWeight: 800, fontSize: "1.8rem", color: C.text, letterSpacing: "-0.03em" }}>7.500 TL</div>
+              </div>
+              <div style={{ height: "1px", background: C.border, margin: "1.25rem 0" }} />
+              <CheckList items={standartFeatures} />
+              <div style={{ marginTop: "auto" }}>
+                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-outline-cta">
+                  Bilgi al
+                </a>
+              </div>
+            </div>
+
+            {/* Klinik */}
+            <div
+              className="pricing-card"
+              style={{
+                background: "#fff",
+                border: `1px solid ${C.border}`,
+                borderRadius: "20px",
+                padding: "2rem 1.75rem",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <div style={{ fontWeight: 800, fontSize: "1.2rem", marginBottom: "0.3rem", color: C.text }}>
+                Klinik Paket
+              </div>
+              <div style={{ fontSize: "0.9rem", color: C.textMuted, marginBottom: "1.5rem" }}>
+                Çok hizmetli klinikler için.
+              </div>
+              <div>
+                <div style={{ fontSize: "0.73rem", color: C.textMuted, fontWeight: 500, marginBottom: "0.15rem" }}>Fiyatlandırma</div>
+                <div style={{ fontWeight: 800, fontSize: "1.8rem", color: C.text, letterSpacing: "-0.03em" }}>Özel teklif</div>
+              </div>
+              <div style={{ height: "1px", background: C.border, margin: "1.25rem 0" }} />
+              <CheckList items={klinikFeatures} />
+              <div style={{ marginTop: "auto" }}>
+                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-outline-cta">
+                  Teklif isteyin
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ maxWidth: "720px", margin: "0 auto", padding: "5rem 2.5rem" }}>
+          <h2
+            style={{
+              fontSize: "clamp(1.55rem, 3.2vw, 2.05rem)",
+              fontWeight: 800,
+              letterSpacing: "-0.025em",
+              marginBottom: "2rem",
+              color: C.text,
+            }}
+          >
+            Sık sorulan sorular
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {faqs.map((faq) => (
+              <div
+                key={faq.q}
+                className="faq-card"
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: "14px",
+                  padding: "1.25rem 1.5rem",
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: "0.975rem", marginBottom: "0.55rem", color: C.text, lineHeight: 1.45 }}>
+                  {faq.q}
+                </div>
+                <div style={{ fontSize: "0.9rem", color: C.textMuted, lineHeight: 1.65 }}>
+                  {faq.a}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section
+        style={{
+          background: `linear-gradient(135deg, ${C.bgDark} 0%, #0f1f3d 55%, #0c2030 100%)`,
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        <div style={{ maxWidth: "640px", margin: "0 auto", padding: "5.5rem 2.5rem", textAlign: "center" }}>
+          <h2
+            style={{
+              fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+              fontWeight: 800,
+              color: "#f1f5f9",
+              marginBottom: "1rem",
+              letterSpacing: "-0.03em",
+              lineHeight: 1.2,
+            }}
+          >
+            Bir sonraki &ldquo;fiyat?&rdquo; mesajını kaçırmayın.
+          </h2>
+          <p
+            style={{
+              color: "#64748b",
+              fontSize: "1rem",
+              lineHeight: 1.65,
+              maxWidth: "420px",
+              margin: "0 auto 2.25rem",
+            }}
+          >
+            RandevuFlow&rsquo;un merkeziniz için nasıl çalışacağını 1 dakikalık demo ile görün.
+          </p>
+          <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-wa-lg">
+            WhatsApp&rsquo;tan demo isteyin
           </a>
         </div>
-      </div>
+      </section>
 
-      {/* ── Uyumluluk notu ── */}
-      <div style={{ background: "#f8fafc", borderTop: `1px solid ${colors.border}` }}>
+      {/* Uyumluluk notu */}
+      <div style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}>
         <div
           style={{
-            maxWidth: "760px",
+            maxWidth: "720px",
             margin: "0 auto",
-            padding: "1.5rem 2rem",
-            textAlign: "center" as const,
-            fontSize: "0.82rem",
-            color: colors.textMuted,
+            padding: "1.5rem 2.5rem",
+            textAlign: "center",
+            fontSize: "0.8rem",
+            color: C.textMuted,
             lineHeight: 1.6,
           }}
         >
-          RandevuFlow, müşteriniz işletmenize ulaştıktan sonra bilgi toplama ve takip sürecini düzenler.
-          Toplu izinsiz mesaj gönderimi için tasarlanmamıştır.
+          RandevuFlow, müşteriniz işletmenize ulaştıktan sonra bilgi toplama ve takip sürecini düzenler. Toplu izinsiz mesaj gönderimi için tasarlanmamıştır. Müşteri bilgileri KVKK kapsamında işlenir.
         </div>
       </div>
 
-      {/* ── Footer ── */}
-      <footer style={styles.footer}>
+      {/* Footer */}
+      <footer
+        style={{
+          background: C.bgDark,
+          color: "#475569",
+          textAlign: "center",
+          padding: "2rem 2.5rem",
+          fontSize: "0.875rem",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
         <div>
-          <strong style={{ color: "#e2e8f0" }}>RandevuFlow</strong> — Türkiye&rsquo;deki hizmet işletmeleri için akıllı müşteri karşılama sistemi.
+          <strong style={{ color: "#e2e8f0" }}>RandevuFlow</strong> - Lazer epilasyon ve estetik merkezleri için AI müşteri asistanı.
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-          WhatsApp · Instagram · SMS entegrasyonu · Google Sheets · Gerçek zamanlı bildirim
+          WhatsApp - Instagram - Google Sheets - 7/24 otomatik yanıt
         </div>
       </footer>
+
+      {/* Sticky WhatsApp */}
+      <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="sticky-wa">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347zM12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.533 5.857L.054 23.454a.5.5 0 00.492.6h.001l5.817-1.524A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22a9.95 9.95 0 01-5.07-1.382l-.36-.214-3.742.981.998-3.648-.235-.374A9.95 9.95 0 012 12C2 6.478 6.478 2 12 2s10 4.478 10 10-4.478 10-10 10z" />
+        </svg>
+        <span>Demo iste</span>
+      </a>
     </div>
   );
 }
