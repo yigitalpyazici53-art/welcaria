@@ -1,193 +1,229 @@
-# SPEC: Test Harness Alignment — RandevuFlow Turkish Schema
+# SPEC: Fix WhatsApp Flow Failures (11 Tests)
 
-**Status:** Awaiting approval  
-**Scope:** `scripts/` test files only — production code (`lib/`, `app/`) is untouched  
-**Goal:** Make all four test scripts consistent with the current Turkish schema and stage machine
-
----
-
-## 1. Objective
-
-The RandevuFlow codebase was migrated from a US plumbing schema to a Turkish laser/aesthetic appointment schema. Production code in `lib/` is fully migrated. Three of the four test scripts in `scripts/` are already aligned. One script (`test-reset-endpoint.ts`) retains two stale stage values and two incorrect post-reset assertions that will cause TypeScript errors and runtime test failures.
-
-This spec governs the safe, surgical correction of those four lines — and only those four lines.
+**Status:** Awaiting approval
+**Scope:** `lib/inboundPipeline.ts`, `lib/conversationState.ts`, `lib/twilio.ts` — and possibly `scripts/test-whatsapp-webhook.ts`
+**Goal:** Fix 11 failing assertions in `npm run test-whatsapp` without making assumptions about whether tests or production logic are wrong
 
 ---
 
-## 2. Audit Results
+## Context
 
-### 2.1 Source of Truth — Production Schema
-
-**ConversationState fields** (`lib/conversationState.ts`):
-
-| Field | Type | Notes |
-|---|---|---|
-| `name` | `string?` | Customer's name |
-| `phone` | `string?` | Normalized Turkish mobile |
-| `service` | `string?` | e.g. "lazer epilasyon" |
-| `treatmentArea` | `string?` | e.g. "tüm vücut", "bacak" |
-| `firstTimeLaser` | `boolean?` | First-time vs. returning |
-| `priceInquired` | `boolean?` | Price/package inquiry signal |
-| `preferredDate` | `string?` | e.g. "cumartesi" |
-| `preferredTime` | `string?` | e.g. "öğleden sonra", "14:00" |
-| `location` | `string?` | Istanbul district or city |
-| `urgency` | `"low" \| "medium" \| "high"?` | |
-| `source` | `string?` | "sms" or "whatsapp" |
-| `notes` | `string?` | Free-form notes |
-| `leadScore` | `"hot" \| "warm" \| "cold"?` | |
-| `stage` | `Stage` | Required — see below |
-| `history` | `Array<{role, content}>` | Last 10 turns |
-| `lastUpdated` | `number` | Unix ms timestamp |
-| `ownerAlertedHighUrgency` | `boolean?` | Deduplication flag |
-| `ownerAlertedComplete` | `boolean?` | Deduplication flag |
-| `sheetLoggedComplete` | `boolean?` | Deduplication flag |
-
-**Fields that no longer exist (removed during migration):**
-
-- `issue_type` (old plumbing field)
-- `fixture` (old plumbing field)
-- `address` (old plumbing field)
-- `collect_address` (old stage name)
-- `collect_service` (old stage name)
-- `preferred_time` (old snake_case field — replaced by `preferredTime`)
-
-### 2.2 Stage Machine
-
-**Type definition** (`lib/conversationState.ts`, line 3–8):
-
-```typescript
-export type Stage =
-  | "collect_treatment_area"   // initial / fresh state
-  | "collect_first_time"
-  | "collect_datetime"
-  | "collect_name"
-  | "complete";
-```
-
-**`getNextStage()` logic** (lines 160–166):
-
-```
-!treatmentArea && !service     → "collect_treatment_area"
-firstTimeLaser === undefined   → "collect_first_time"
-!preferredDate && !preferredTime → "collect_datetime"
-!name                          → "collect_name"
-else                           → "complete"
-```
-
-**`freshState()` initial stage:** `"collect_treatment_area"` (line 42)
-
-> **Important discrepancy with the brief:** The brief stated the flow as  
-> `collect_name → collect_service → collect_datetime → complete`.  
-> This does not match the code. The correct live flow is:  
-> `collect_treatment_area → collect_first_time → collect_datetime → collect_name → complete`  
-> The brief appears to describe a transitional or outdated snapshot.
-
-### 2.3 Test File Audit
-
-| Script | Status | Issues |
-|---|---|---|
-| `scripts/test-sms.ts` | ✅ Aligned | None — stages, fields, and assertions all correct |
-| `scripts/test-inbound-endpoint.ts` | ✅ Aligned | None — uses all Turkish stage names and fields |
-| `scripts/test-whatsapp-webhook.ts` | ✅ Aligned | None — 4-turn and 6-turn flows use correct schema |
-| `scripts/test-reset-endpoint.ts` | ❌ **Has bugs** | See §2.4 |
-
-### 2.4 Bugs in `test-reset-endpoint.ts`
-
-**Bug 1 — Stale stage value (×2)**
-
-Lines 154 and 176 call `updateState()` with `stage: "collect_service"`. This stage does not exist in the `Stage` type. TypeScript will reject it at compile time (`npm run type-check`).
-
-```typescript
-// Line 154 (Section 3) — current (WRONG):
-await updateState(PHONE_TEST, { name: "Test User", stage: "collect_service" });
-
-// Line 176 (Section 4) — current (WRONG):
-await updateState(PHONE_PLUS_TEST, { name: "Test User 2", stage: "collect_service" });
-```
-
-**Correct replacement:** `"collect_treatment_area"` (the semantically appropriate "non-initial" stage to write before testing that a reset clears it; any valid stage would work, but `collect_treatment_area` is the most neutral choice and matches the fresh-state default).
+RandevuFlow is a Turkish laser/aesthetic intake system. WhatsApp inbound messages flow through `processInboundMessage()` in `lib/inboundPipeline.ts`, which drives a multi-stage state machine defined in `lib/conversationState.ts`. `npm run test-whatsapp` currently fails with **11 failures across 3 sections**.
 
 ---
 
-**Bug 2 — Wrong post-reset assertion (×2)**
+## Failure Map (11 failures → 3 root causes)
 
-Lines 168 and 190 assert that the stage after a reset is `"collect_name"`. After `deleteConversationState()`, `getState()` returns `freshState()` whose initial `stage` is `"collect_treatment_area"`, not `"collect_name"`.
+### Root Cause A — Stage stuck at `collect_first_time`
 
-```typescript
-// Line 168 (Section 3) — current (WRONG):
-assertEqual("stage after reset = collect_name", stateAfterReset.stage, "collect_name");
+`getNextStage()` (`conversationState.ts:161`) contains this gate:
 
-// Line 190 (Section 4) — current (WRONG):
-assertEqual("stage after reset = collect_name", stateAfterReset2.stage, "collect_name");
+```ts
+if (state.firstTimeLaser === undefined) return "collect_first_time";
 ```
 
-**Correct replacement:** Assert `"collect_treatment_area"`. Update the label string to match.
+None of the test conversations ever set `firstTimeLaser`. The bot replies "Daha once lazer epilasyon yaptirdiniz mi?" indefinitely. Nothing downstream (collect_name, complete) is ever reached.
+
+**Failures caused by this:**
+- `T4: stage = complete` — got `collect_first_time`
+- `W6: stage = complete` — got `collect_first_time`
+- `D1: isFirstComplete triggers before flag written` — PHONE_MT is stuck at `collect_first_time` after Section 2, so `stage === "complete"` is false and the deduplication assertion fails
 
 ---
 
-## 3. Change Plan
+### Root Cause B — Bare-word name "ayşe" not extracted
 
-All changes are in `scripts/test-reset-endpoint.ts` only. Four lines total.
+`inboundPipeline.ts:66–80` runs the name fallback only when:
+- `stateBefore.stage === "collect_name"`, OR
+- the last assistant message matches `/isminizi|adınızı|adınız\b|adını/i`
 
-### Change A — Lines 154 and 176
+Because of Root Cause A, the stage is stuck at `collect_first_time`. The assistant reply is "Daha once lazer epilasyon yaptirdiniz mi?" which does NOT match the name-asking regex. So when the user sends `"ayşe"` at W2, the fallback never fires.
 
-Replace `"collect_service"` with `"collect_treatment_area"` in both `updateState` calls.
+**Failures caused by this (all cascade from W2 not capturing the name):**
+- `W2: name = Ayşe` — got `undefined`
+- `W3: name still Ayşe` — never set, so not persisted
+- `W4: name still Ayşe` — never set, so not persisted
+- `W6: name = Ayşe` — never set
+- `W6: ownerAlert includes Ayşe` — name absent from state
+- `W6: shouldLogToSheet = true` — `shouldLogToSheet` requires `stateAfter.name`; got `false`
 
-```diff
-- await updateState(PHONE_TEST, { name: "Test User", stage: "collect_service" });
-+ await updateState(PHONE_TEST, { name: "Test User", stage: "collect_treatment_area" });
+---
 
-- await updateState(PHONE_PLUS_TEST, { name: "Test User 2", stage: "collect_service" });
-+ await updateState(PHONE_PLUS_TEST, { name: "Test User 2", stage: "collect_treatment_area" });
+### Root Cause C — `buildOwnerAlert()` does not render location
+
+`lib/twilio.ts:25–63` builds the owner alert line by line. There is no line for `state.location`. The location slot IS extracted and stored in state, but is silently omitted from the alert string.
+
+**Failures caused by this:**
+- `T4: ownerAlert includes Kadıköy` — "Kadıköy" not found in alert
+- `W6: ownerAlert includes Kadıköy` — "Kadıköy" not found in alert
+
+---
+
+## Ambiguities — Decisions Required Before Implementation
+
+### Ambiguity 1: Should `firstTimeLaser` gate stage progression?
+
+**The question:** `getNextStage()` currently returns `collect_first_time` until `firstTimeLaser` is explicitly set. Test conversations never set it. Is this:
+
+**(A) A test gap** — the test messages should include an answer like "evet" / "hayır" / "ilk kez değil" so the pipeline correctly advances. Do not touch `getNextStage()`.
+
+**(B) A pipeline design issue** — `firstTimeLaser` is a useful data point but should NOT block stage progression. Remove the gate; collect it opportunistically when the user mentions it.
+
+**Evidence for (A):**
+- `collect_first_time` stage and its fallback reply exist intentionally.
+- `buildOwnerAlert()` already renders `firstTimeLaser` when set.
+- Adding one line to each test scenario would fix the stage failures without touching production logic.
+
+**Evidence for (B):**
+- All 6-turn and 4-turn test conversations were written WITHOUT first-time info, suggesting the author expected the flow to complete without it.
+- Real WhatsApp users may not answer "Daha once yaptirdiniz mi?" explicitly before providing a name/date.
+- Making it a hard gate means the flow never completes unless the user answers that specific question — degraded UX.
+- `shouldLogToSheet` and lead scoring do not require `firstTimeLaser`.
+
+**Recommendation:** Option (B). Remove the gate. Collect `firstTimeLaser` opportunistically. The owner can ask during the actual appointment call. **This is a product decision — confirm before implementing.**
+
+---
+
+### Ambiguity 2: Should bare-word names be extracted outside `collect_name` stage?
+
+**The question:** When a user sends just `"ayşe"` (no phone, no service, no date), should it be captured as a name regardless of the current stage?
+
+**(A) Stage-gated (current design):** Only extract bare names when in `collect_name` or when history contains an explicit name question. This avoids false positives.
+
+**(B) Opportunistic:** If the message contains no other extractable slots and looks like a Turkish name, store it regardless of stage.
+
+**Evidence for (A):**
+- `slotExtractor.ts:197` comment: "Call ONLY when extractSlots() found no name and current stage is collect_name or the assistant just asked for a name."
+- Without a stage gate, certain single-word replies could be misidentified as names (though `NAME_BLOCKLIST` and `BARE_NAME_RE` guard against common false positives).
+
+**Evidence for (B):**
+- The W2 test sends `"ayşe"` in turn 2 (right after service inquiry) and expects `name = "Ayşe"` extracted.
+- Even if Ambiguity 1 is resolved as (B) and the gate is removed, the stage at W2 would be `collect_datetime` — still not `collect_name`. Name still would not be extracted.
+- The only way W2 works as written is if the pipeline extracts bare names at any stage (when no other slots are present).
+
+**Note:** If Ambiguity 1 is resolved as (A) (add first-time info to tests), the stage at W2 would depend on what turn provides the first-time answer and what the new stage sequence looks like. In that case, re-analyze W2 before fixing this.
+
+**Recommendation:** Extend the fallback to also trigger when `stateBefore.stage` is `"collect_first_time"` or `"collect_datetime"` AND `Object.keys(extractedSlots).length === 0` (nothing else was extracted from the message). This is narrow enough to avoid false positives. **Confirm scope before implementing.**
+
+---
+
+### Ambiguity 3: Should `buildOwnerAlert()` include location? *(No ambiguity — yes)*
+
+`state.location` is stored in `ConversationState`, is checked by `shouldLogToSheet`, and the tests explicitly assert it appears in the alert. This is a straightforward omission.
+
+**No decision needed.** Add a location line to `buildOwnerAlert()`.
+
+---
+
+## Implementation Plan (contingent on ambiguity resolution)
+
+### Fix C — Add location to `buildOwnerAlert()` (safe, no dependencies)
+
+**File:** `lib/twilio.ts`, inside `buildOwnerAlert()`, after the timing block
+
+```ts
+if (state.location) lines.push(`Konum: ${state.location}`);
 ```
 
-### Change B — Lines 168 and 190
+**Acceptance criteria:**
+- `T4: ownerAlert includes Kadıköy` → PASS
+- `W6: ownerAlert includes Kadıköy` → PASS
+- No other alert assertions break
 
-Replace `"collect_name"` assertion and label with `"collect_treatment_area"`.
+---
 
-```diff
-- assertEqual("stage after reset = collect_name", stateAfterReset.stage, "collect_name");
-+ assertEqual("stage after reset = collect_treatment_area", stateAfterReset.stage, "collect_treatment_area");
+### Fix A — `firstTimeLaser` gate (choose Option A or B from Ambiguity 1)
 
-- assertEqual("stage after reset = collect_name", stateAfterReset2.stage, "collect_name");
-+ assertEqual("stage after reset = collect_treatment_area", stateAfterReset2.stage, "collect_treatment_area");
+**If Option B chosen (remove gate from pipeline):**
+
+**File:** `lib/conversationState.ts`, `getNextStage()`
+
+Remove:
+```ts
+if (state.firstTimeLaser === undefined) return "collect_first_time";
 ```
 
----
+Keep `collect_first_time` as a valid `Stage` type — it may still appear in state when set directly. Only remove it from mandatory progression.
 
-## 4. Acceptance Criteria
+**Acceptance criteria:**
+- `T4: stage = complete` → PASS
+- `W6: stage = complete` → PASS
+- `D1: isFirstComplete triggers before flag written` → PASS (cascades from T4 fix)
+- Single-turn test (Section 1) still returns a useful first reply
+- `firstTimeLaser` still captured via `extractSlots()` when user mentions it
 
-1. `npm run type-check` exits 0 (no TypeScript errors).
-2. `npm run test-reset` exits 0 with all tests passing (in memory mode — no Redis required).
-3. `npm run test-sms`, `npm run test-inbound`, and `npm run test-whatsapp` still exit 0 (no regression).
-4. No changes to any file outside `scripts/test-reset-endpoint.ts`.
-5. No changes to production code (`lib/`, `app/`).
+**If Option A chosen (add first-time signals to tests):**
 
----
+**File:** `scripts/test-whatsapp-webhook.ts`
 
-## 5. Out of Scope
-
-- Modifying `lib/conversationState.ts`, `lib/slotExtractor.ts`, `lib/inboundPipeline.ts`, or any other production file.
-- Adding new test cases or test scripts.
-- Changing the `Stage` type or `getNextStage()` logic.
-- Modifying `test-sms.ts`, `test-inbound-endpoint.ts`, or `test-whatsapp-webhook.ts` — these are already correct.
+- Add "ilk kez yaptırıyorum" or "hayır, daha önce yaptırmadım" to an appropriate test message body
+- Identify which turn in the 4-turn and 6-turn flows should carry this signal
+- Do NOT change `getNextStage()`
 
 ---
 
-## 6. Boundaries
+### Fix B — Bare-word name extraction scope (choose scope from Ambiguity 2)
 
-| | Rule |
+**File:** `lib/inboundPipeline.ts`, name fallback block (lines 66–80)
+
+Extend `needFallback` condition:
+
+```ts
+const needFallback =
+  stateBefore.stage === "collect_name" ||
+  stateBefore.stage === "collect_first_time" ||
+  stateBefore.stage === "collect_datetime" ||
+  stateBefore.history
+    .slice(-2)
+    .some(
+      (h) =>
+        h.role === "assistant" &&
+        /isminizi|adınızı|adınız\b|adını/i.test(h.content)
+    );
+```
+
+Also add a guard: only invoke `extractNameFallback` when `Object.keys(extractedSlots).length === 0`, so a message like "cumartesi öğleden sonra" that already yielded date/time slots is never mistaken for a name.
+
+**Acceptance criteria:**
+- `W2: name = Ayşe` — "ayşe" extracted and title-cased → PASS
+- `W3: name still Ayşe` → PASS (persisted across turns)
+- `W4: name still Ayşe` → PASS
+- `W6: name = Ayşe` → PASS
+- `W6: ownerAlert includes Ayşe` → PASS
+- `W6: shouldLogToSheet = true` → PASS
+- Single-word messages "evet", "hayır", "tamam" are NOT extracted as names (covered by existing `NAME_BLOCKLIST` and `BARE_NAME_RE`)
+
+---
+
+## Boundaries
+
+| Category | Rule |
 |---|---|
-| **Always** | Edit exactly the four identified lines; run type-check before reporting done |
-| **Ask first** | Any change beyond the four specified lines; any production code touch |
-| **Never** | Modify `lib/`, `app/`, `next.config.ts`, or any non-test file |
+| **Always safe** | Fix `buildOwnerAlert()` — additive only, no behavioral change |
+| **Confirm first** | Remove `firstTimeLaser` gate from `getNextStage()` — changes prod conversation flow |
+| **Confirm first** | Expand name fallback to additional stages — changes when names are captured |
+| **Never** | Change `ConversationState` schema without regression-testing all 4 test scripts |
+| **Never** | Touch `test-sms.ts` or `test-inbound-endpoint.ts` — out of scope |
+| **Never** | Assume test messages are wrong without a product decision |
+| **Never** | Add error handling for scenarios that can't happen |
 
 ---
 
-## 7. Open Questions / Ambiguities
+## Expected Outcome
 
-1. **Flow described in brief vs. code:** The brief states `collect_name → collect_service → collect_datetime → complete`. The actual stage machine has neither `collect_service` nor that ordering. Please confirm the authoritative flow is what's in code: `collect_treatment_area → collect_first_time → collect_datetime → collect_name → complete`. If the intent is to change the stage machine itself, that is a separate spec.
+Resolving all three root causes brings failures from 11 → 0:
 
-2. **`test-reset-endpoint.ts` Section 5 (line 197):** Uses `stage: "collect_datetime"` which IS a valid stage. This line is correct and not in scope.
+| Root Cause | Failures Fixed |
+|---|---|
+| C — location in alert | 2 |
+| A — `firstTimeLaser` gate | 3 (T4 stage, W6 stage, D1 cascade) |
+| B — name extraction scope | 6 (W2–W6 name assertions + sheet log) |
+| **Total** | **11** |
 
-3. **`collect_service` in `updateState`:** TypeScript's structural typing means passing an invalid `stage` string currently compiles only if the Stage type uses `string` as a base. Since `Stage` is a union of string literals, `"collect_service"` will cause a compile error. If `npm run type-check` is not currently run in CI, this bug is silent. The spec recommends adding `type-check` to any CI pipeline.
+---
+
+## Open Questions for Product Owner
+
+1. **Is `firstTimeLaser` a required intake field?** If required, add it to test messages (Option A). If advisory, remove the gate (Option B).
+2. **Should users be able to volunteer their name at any point**, or only when explicitly asked?
+3. **Is there a `collect_location` stage missing from `getNextStage()`?** Currently location is captured if mentioned and defaulted to "Ümraniye" if absent at complete. Should this be a gated stage?
