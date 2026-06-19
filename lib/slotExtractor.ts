@@ -4,6 +4,9 @@ export interface ExtractedSlots {
   name?: string;
   phone?: string;
   service?: string;
+  treatmentArea?: string;
+  firstTimeLaser?: boolean;
+  priceInquired?: boolean;
   preferredDate?: string;
   preferredTime?: string;
   location?: string;
@@ -40,48 +43,64 @@ const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
   [/\b(acele değil|acele yok|uygun olduğunda|ne zaman uygunsa|fırsat buldukça)\b/i, "low"],
 ];
 
-// Service offerings — most specific patterns first to avoid partial matches.
-// Turkish chars (ş, ğ, ü, ö, ı) are not in \w, so \b is unreliable around them;
-// use specific phrases instead.
+// Laser/aesthetic service patterns — most specific first.
 const SERVICE_PATTERNS: Array<[RegExp, string]> = [
-  // Hair — compound/specific before generic
-  [/saç\s+kaynak(?:lama)?/i, "saç kaynaklama"],
-  [/gelin\s+saç/i, "gelin saçı"],
-  [/keratin\s+bak/i, "keratin bakımı"],
-  [/dip\s+boya/i, "dip boya"],
-  [/saç\s+boyama/i, "saç boyama"],
-  [/saç\s+kesim/i, "saç kesimi"],
-  [/saç\s+bak/i, "saç bakımı"],
-  [/röfle/i, "röfle"],
-  [/ombre/i, "ombre"],
-  [/fön/i, "fön"],
-  // Brow & lash
-  [/mikroblading/i, "mikroblading"],
-  [/kirpik\s+lifting|lash\s+lift/i, "kirpik lifting"],
-  [/ipek\s+kirpik/i, "ipek kirpik"],
-  [/kaş\s+tasarım|kaş\s+laminasyon|brow/i, "kaş tasarımı"],
-  [/kaş\s+(?:alma|aldırma)/i, "kaş alma"],
-  [/kirpik\s+(?:lamine|boya)/i, "kirpik bakımı"],
-  // Skin
-  [/cilt\s+bak|yüz\s+bak|facial/i, "cilt bakımı"],
-  // Nails
-  [/protez\s+tırnak/i, "protez tırnak"],
-  [/kalıcı\s+(?:oje|manikür)|gel\s+manikür/i, "kalıcı manikür"],
-  [/manikür|manicure/i, "manikür"],
-  [/pedikür|pedicure/i, "pedikür"],
-  // Waxing
-  [/ağda|\bwax\b/i, "ağda"],
-  // Makeup
-  [/makyaj/i, "makyaj"],
-  // Other service verticals
-  [/lazer\s+epilasyon|epilasyon|\blazer\b/i, "lazer epilasyon"],
+  [/lazer\s+epilasyon|epilasyon|lazer/i, "lazer epilasyon"],
   [/botoks?|dolgu|filler/i, "estetik uygulama"],
-  [/masaj|massage|terapi/i, "masaj"],
-  // "diş" ends in ş (non-\w) so trailing \b fails — use (?!\w) lookahead
-  [/diş\s+(?:beyazlatma|kaplama)|veneer|zirkonyum|implant|\bdiş(?!\w)/i, "diş tedavisi"],
-  [/oto\s+detay|araç\s+(?:yıkama|detay|bakım)|car\s+(?:detail|wash)/i, "oto detay"],
-  [/sakal|tıraş|erkek\s+bakım|barber/i, "erkek bakımı"],
-  [/hairstyle|haircut/i, "saç kesimi"],
+  [/cilt\s+bak|yüz\s+bak|facial/i, "cilt bakımı"],
+  [/masaj|terapi/i, "masaj"],
+];
+
+// Body-area patterns for laser epilasyon — most specific first.
+const TREATMENT_AREA_PATTERNS: Array<[RegExp, string]> = [
+  [/tüm\s+vücut|full\s+body/i, "tüm vücut"],
+  [/koltuk\s*alt[ıi]/i, "koltuk altı"],
+  [/bikini/i, "bikini"],
+  [/bıyık|dudak\s*üst[üu]|üst\s*dudak/i, "dudak üstü"],
+  [/çene/i, "çene"],
+  [/sırt/i, "sırt"],
+  [/göğüs/i, "göğüs"],
+  [/genital/i, "genital"],
+  [/bacak/i, "bacak"],
+  [/\bkol\b/i, "kol"],
+  [/yüz/i, "yüz"],
+];
+
+// Returning-customer signals — checked before first-time to avoid false negatives.
+const FIRST_TIME_FALSE_PATTERNS: RegExp[] = [
+  /daha\s+önce\s+yaptırd[ıi][mn]/i,
+  /devam\s+ediyorum/i,
+  /seanslar[ıi]m\s+var/i,
+  /seans[ıi]m\s+var/i,
+  /yarım\s+kald[ıi]/i,
+  /tekrar\s+başla/i,
+  /seansa?\s+devam/i,
+  /önceden\s+yaptırd[ıi][mn]/i,
+];
+
+// First-time signals.
+// Use [İi] explicitly — JavaScript regex /i flag does not map 'i' ↔ 'İ' (Turkish dotted-I).
+const FIRST_TIME_TRUE_PATTERNS: RegExp[] = [
+  /[İi]lk\s+kez/,
+  /[İi]lk\s+defa/,
+  /daha\s+önce\s+yaptırma[dm][ıi][mn]?/i,
+  /hiç\s+yaptırma[dm][ıi][mn]?/i,
+  /başlama[dm][ıi][mn]?/i,
+  /yaptırmadım/i,
+  /hiç\s+denemedim/i,
+];
+
+// Price / package inquiry signals.
+const PRICE_INQUIRY_PATTERNS: RegExp[] = [
+  /fiyat/i,
+  /ücret/i,
+  /ne\s+kadar/i,
+  /kaç\s+(tl|lira|para)/i,
+  /kampanya/i,
+  /paket/i,
+  /indirim/i,
+  /ödeme/i,
+  /tutar/i,
 ];
 
 // Known Istanbul districts and common Turkish cities for fallback location matching
@@ -117,27 +136,18 @@ const KNOWN_LOCATIONS: Record<string, string> = {
 
 // Structural patterns for Turkish branch/location phrases.
 // Tuple: [regex, capture group index]
-// These run before the KNOWN_LOCATIONS fallback.
 const LOCATION_PATTERNS: Array<[RegExp, number]> = [
-  // "Şube: Ümraniye", "Sube: Ümraniye", "Konum: Ataşehir", "Lokasyon: Beşiktaş", "Adres: Kadıköy"
   [/(?:[ŞşSs]ube|[Kk]onum|[Ll]okasyon|[Aa]dres)\s*:\s*([A-ZÇĞİÖŞÜa-zçğışöü][A-Za-zÇĞİÖŞÜçğışöü]*)/, 1],
-  // "Şube Ümraniye", "şube Ümraniye" (space only, no colon — capital guard prevents capturing "olarak")
   [/[ŞşSs]ube\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
-  // "Kadıköy şubesi", "Ataşehir şubesini", "Nişantaşı şubesinde"
   [/([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)?)\s+şube/, 1],
-  // "Konum Kadıköy", "konum Kadıköy"
   [/[Kk]onum\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
-  // "Şube olarak Kadıköy", "şube olarak Kadıköy"
   [/[Şş]ube\s+olarak\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
-  // "Nişantaşı tarafı olur", "Kadıköy yakın"
   [/([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)\s+(?:tarafı|yakın)/, 1],
-  // "Bana Kadıköy yakın", "bana Kadıköy"
   [/[Bb]ana\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
 ];
 
 // Looks for explicit name introductions
 const NAME_PATTERNS: RegExp[] = [
-  // "İsim: Aylin", "isim: aylin", "Ad: Aylin", "Adım: Aylin"
   /(?:[İi]sim|[Aa]d(?:ım)?)\s*:\s*([A-ZÇĞİÖŞÜa-zçğışöüI][A-Za-zÇĞİÖŞÜçğışöü]*)/,
   /\b(?:ben|benim adım|ismim|adım)\s+([A-ZÇĞİÖŞÜa-zçğışöüI]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöüI]{2,})?)\b/i,
   /^([A-ZÇĞİÖŞÜ][a-zçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğışöü]{1,})?)\s+(?:olarak|aradım|yazıyorum|merhaba)\b/,
@@ -145,9 +155,11 @@ const NAME_PATTERNS: RegExp[] = [
 
 // Words that must not be mistaken for a Turkish name in the bare-word fallback
 const NAME_BLOCKLIST = new Set([
-  // services
-  "lazer", "epilasyon", "masaj", "manikür", "pedikür", "botoks", "dolgu", "wax", "ağda",
-  "makyaj", "ombre", "röfle", "fön", "mikroblading", "kirpik", "protez", "keratin",
+  // services / treatments
+  "lazer", "epilasyon", "masaj", "botoks", "dolgu", "wax", "ağda",
+  "makyaj", "facial", "estetik", "seans", "paket", "kampanya", "indirim",
+  // body areas
+  "bacak", "kol", "sırt", "göğüs", "çene", "bikini", "genital", "bölge",
   // locations (lowercase)
   "kadıköy", "ataşehir", "nişantaşı", "beşiktaş", "şişli", "fatih", "üsküdar",
   "bakırköy", "beyoğlu", "sarıyer", "maltepe", "kartal", "pendik", "tuzla",
@@ -189,9 +201,7 @@ function turkishTitleCase(word: string): string {
  */
 export function extractNameFallback(message: string): string | undefined {
   const trimmed = message.trim();
-  // Strip self-introduction prefixes before testing
   const stripped = trimmed.replace(NAME_INTRO_RE, "").trim();
-  // Consider only first 2 words
   const words = stripped.split(/\s+/).slice(0, 2);
   const candidate = words.join(" ");
 
@@ -202,11 +212,13 @@ export function extractNameFallback(message: string): string | undefined {
 }
 
 function calculateLeadScore(slots: ExtractedSlots): LeadScore {
+  const hasService = !!(slots.service || slots.treatmentArea);
   const hasDateTime = !!(slots.preferredDate || slots.preferredTime);
-  const hasService = !!slots.service;
   const isUrgent = slots.urgency === "high";
 
-  if ((hasService && hasDateTime) || isUrgent) return "hot";
+  if (isUrgent) return "hot";
+  if (hasService && hasDateTime) return "hot";
+  if (slots.priceInquired && hasService) return "warm";
   if (hasService || hasDateTime) return "warm";
   return "cold";
 }
@@ -222,6 +234,24 @@ export function extractSlots(message: string): ExtractedSlots {
       result.service = service;
       break;
     }
+  }
+
+  for (const [pattern, area] of TREATMENT_AREA_PATTERNS) {
+    if (pattern.test(message)) {
+      result.treatmentArea = area;
+      break;
+    }
+  }
+
+  // Check returning-customer signals before first-time signals to avoid false negatives.
+  if (FIRST_TIME_FALSE_PATTERNS.some((p) => p.test(message))) {
+    result.firstTimeLaser = false;
+  } else if (FIRST_TIME_TRUE_PATTERNS.some((p) => p.test(message))) {
+    result.firstTimeLaser = true;
+  }
+
+  if (PRICE_INQUIRY_PATTERNS.some((p) => p.test(message))) {
+    result.priceInquired = true;
   }
 
   for (const pattern of DATE_PATTERNS) {
@@ -282,6 +312,9 @@ export function detectConflict(
   state: ConversationState,
   extracted: ExtractedSlots
 ): string | null {
+  if (state.treatmentArea && extracted.treatmentArea && state.treatmentArea !== extracted.treatmentArea) {
+    return `Daha önce ${state.treatmentArea} bölgesinden bahsetmiştiniz. Hangi bölge için devam etmek istersiniz: ${extracted.treatmentArea} mi yoksa ${state.treatmentArea} mi?`;
+  }
   if (state.service && extracted.service && state.service !== extracted.service) {
     return `Daha önce ${state.service} hakkında konuşmuştuk. ${extracted.service} mi yoksa ${state.service} için mi randevu almak istiyorsunuz?`;
   }
@@ -292,20 +325,26 @@ export function detectConflict(
 // Call this after merging extractedSlots into state to get an accurate multi-turn score.
 export function calculateLeadScoreFromState(state: {
   service?: string;
+  treatmentArea?: string;
   preferredDate?: string;
   preferredTime?: string;
   name?: string;
   phone?: string;
   urgency?: UrgencyLevel;
+  priceInquired?: boolean;
+  firstTimeLaser?: boolean;
 }): LeadScore {
+  const hasService = !!(state.service || state.treatmentArea);
   const hasDateTime = !!(state.preferredDate || state.preferredTime);
-  const hasService = !!state.service;
   const hasContact = !!(state.name || state.phone);
   const isUrgent = state.urgency === "high";
 
   if (isUrgent) return "hot";
+  if (hasService && hasDateTime && hasContact) return "hot";
   if (hasService && hasDateTime) return "hot";
-  if (hasService && hasContact) return "hot";
-  if (hasService || hasDateTime) return "warm";
+  if (state.priceInquired && hasService && hasDateTime) return "hot";
+  if (state.priceInquired && hasService) return "warm";
+  if (hasService) return "warm";
+  if (hasDateTime) return "warm";
   return "cold";
 }

@@ -1,11 +1,10 @@
 /**
- * RandevuFlow — internal test endpoint validation script.
+ * RandevuFlow — internal test endpoint validation script (laser/aesthetic flow).
  *
  * Usage:
  *   npm run test-inbound
  *
  * Tests the /api/test/inbound pipeline logic directly (no HTTP server required).
- * Authorization check, Turkish message processing, and reply quality are verified.
  */
 
 import * as fs from "fs";
@@ -60,9 +59,9 @@ import { generateSmsReply } from "../lib/anthropic";
 
 // Turkish characters allowed in sanitized output
 const TURKISH_CHARS = "ÇçĞğİıÖöŞşÜü";
-const SMS_VALID_RE = new RegExp(`^[\\x20-\\x7E${TURKISH_CHARS}]*$`);
+const SMS_VALID_RE = new RegExp(`^[\\x20-\\x7E${TURKISH_CHARS}\\n]*$`);
 
-// Prohibited phrases — booking confirmations and old plumbing domain terms
+// Prohibited phrases — booking confirmations and old plumbing/salon domain terms
 const PROHIBITED_PHRASES = [
   "randevunuz onaylandı",
   "randevunuz kesinleşti",
@@ -140,11 +139,11 @@ function assertNotContains(label: string, haystack: string, needle: string) {
 // ── Pipeline runner (mirrors /api/test/inbound route logic) ──────────────
 
 const STAGE_FALLBACK: Record<string, string> = {
-  collect_name:     "Merhaba! Randevu talebi icin adinizi ogrenebilir miyim?",
-  collect_service:  "Hangi hizmet icin randevu almak istersiniz?",
-  collect_datetime: "Hangi gun ve saatte gelmek istersiniz?",
-  collect_location: "Hangi subemizi tercih edersiniz?",
-  complete:         "Bilgilerinizi aldik. Ekibimiz sizi arayarak onaylayacaktir.",
+  collect_treatment_area: "Merhaba! Hangi bolge icin lazer epilasyon dusunuyorsunuz?",
+  collect_first_time:     "Daha once lazer epilasyon yaptirdiniz mi?",
+  collect_datetime:       "Hangi gun ve saatte gelebilirsiniz?",
+  collect_name:           "Adinizi ve telefon numaranizi alabilir miyim?",
+  complete:               "Bilgilerinizi aldik. Merkezimiz sizi arayarak uygun zamani paylasacaktir.",
 };
 
 interface PipelineResult {
@@ -166,6 +165,11 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
 
   const intentResult = classifyIntent(input, isFirstMessage);
   const extractedSlots = extractSlots(input);
+
+  // Normalize service when treatment area is detected without explicit service
+  if (extractedSlots.treatmentArea && !extractedSlots.service && !stateBefore.service) {
+    extractedSlots.service = "lazer epilasyon";
+  }
 
   // Stage-aware name fallback — mirrors inboundPipeline.ts logic
   if (!extractedSlots.name) {
@@ -190,7 +194,6 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
     let updated = await updateState(from, extractedSlots as Partial<ConversationState>);
     const recalcScore = calculateLeadScoreFromState(updated);
     updated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(updated) });
-    // Single-location pilot: default location to "Ümraniye" when stage reaches complete
     if (updated.stage === "complete" && !updated.location) {
       updated = await updateState(from, { location: "Ümraniye" });
     }
@@ -200,10 +203,10 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
       try {
         assistantReply = await generateSmsReply(input, updated);
       } catch {
-        assistantReply = sanitizeSmsText(STAGE_FALLBACK[updated.stage] ?? STAGE_FALLBACK.collect_name);
+        assistantReply = sanitizeSmsText(STAGE_FALLBACK[updated.stage] ?? STAGE_FALLBACK.collect_treatment_area);
       }
     } else {
-      assistantReply = sanitizeSmsText(STAGE_FALLBACK[updated.stage] ?? STAGE_FALLBACK.collect_name);
+      assistantReply = sanitizeSmsText(STAGE_FALLBACK[updated.stage] ?? STAGE_FALLBACK.collect_treatment_area);
     }
   }
 
@@ -233,14 +236,13 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("=== test-inbound-endpoint ===\n");
+  console.log("=== test-inbound-endpoint (laser/aesthetic flow) ===\n");
 
   // ── Section 1: Authorization check ───────────────────────────────────────
   console.log("── 1. Authorization ──");
 
   const CONFIGURED_SECRET = process.env.TEST_WEBHOOK_SECRET!;
 
-  // Wrong secret should be rejected
   {
     const requestSecret = "totally-wrong-secret";
     const accepted = !!requestSecret && requestSecret === CONFIGURED_SECRET;
@@ -248,7 +250,6 @@ async function main() {
     else fail("wrong secret rejected", "wrong secret was accepted");
   }
 
-  // Missing (empty) secret should be rejected
   {
     const requestSecret = "";
     const accepted = !!requestSecret && requestSecret === CONFIGURED_SECRET;
@@ -256,7 +257,6 @@ async function main() {
     else fail("missing secret rejected", "empty secret was accepted");
   }
 
-  // Correct secret should be accepted
   {
     const requestSecret = CONFIGURED_SECRET;
     const accepted = !!requestSecret && requestSecret === CONFIGURED_SECRET;
@@ -264,27 +264,33 @@ async function main() {
     else fail("correct secret accepted", "valid secret was rejected");
   }
 
-  // ── Section 2: Turkish message 1 — price question ─────────────────────────
-  console.log("\n── 2. Mesaj: Fiyat sorusu (lazer epilasyon) ──");
+  // ── Section 2: Price inquiry with treatment area ──────────────────────────
+  console.log("\n── 2. Mesaj: Tüm vücut lazer epilasyon fiyat sorusu ──");
 
   const PHONE_1 = "+905550000101";
   await resetStateForTest(PHONE_1);
 
-  const MSG1 = "Merhaba lazer epilasyon fiyatı alabilir miyim?";
+  const MSG1 = "Merhaba tüm vücut lazer epilasyon fiyatı ne kadar?";
   const r1 = await runPipeline(PHONE_1, MSG1);
 
-  console.log(`  intent      : ${r1.intent}`);
-  console.log(`  service     : ${r1.extractedSlots.service ?? "(none)"}`);
-  console.log(`  reply       : ${r1.assistantReply}`);
-  console.log(`  stage after : ${r1.nextStage}`);
+  console.log(`  intent        : ${r1.intent}`);
+  console.log(`  service       : ${r1.extractedSlots.service ?? "(none)"}`);
+  console.log(`  treatmentArea : ${r1.extractedSlots.treatmentArea ?? "(none)"}`);
+  console.log(`  priceInquired : ${r1.extractedSlots.priceInquired ?? false}`);
+  console.log(`  stage after   : ${r1.nextStage}`);
+  console.log(`  reply         : ${r1.assistantReply}`);
 
   assertEqual("intent = price_question", r1.intent, "price_question");
-  assertEqual("service extracted = lazer epilasyon", r1.extractedSlots.service, "lazer epilasyon");
-  assertDefined("stateAfter.service set", r1.stateAfter.service);
+  assertEqual("treatmentArea = tüm vücut", r1.extractedSlots.treatmentArea, "tüm vücut");
+  assertEqual("service normalized = lazer epilasyon", r1.extractedSlots.service, "lazer epilasyon");
+  assertEqual("priceInquired = true", r1.extractedSlots.priceInquired, true);
+  assertEqual("stage = collect_datetime", r1.nextStage, "collect_datetime");
   assertDefined("reply non-empty", r1.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r1.assistantReply);
+  assertNotContains("reply must not invent price (₺)", r1.assistantReply, "₺");
+  assertNotContains("reply must not invent price (tl)", r1.assistantReply, " tl");
 
-  // ── Section 3: Turkish message 2 — date/time ─────────────────────────────
+  // ── Section 3: Date and time extraction ──────────────────────────────────
   console.log("\n── 3. Mesaj: Tarih ve saat ──");
 
   const PHONE_2 = "+905550000102";
@@ -293,36 +299,38 @@ async function main() {
   const MSG2 = "Tüm vücut için cumartesi öğleden sonra uygun olur.";
   const r2 = await runPipeline(PHONE_2, MSG2);
 
-  console.log(`  intent      : ${r2.intent}`);
-  console.log(`  date        : ${r2.extractedSlots.preferredDate ?? "(none)"}`);
-  console.log(`  time        : ${r2.extractedSlots.preferredTime ?? "(none)"}`);
-  console.log(`  reply       : ${r2.assistantReply}`);
-  console.log(`  stage after : ${r2.nextStage}`);
+  console.log(`  intent        : ${r2.intent}`);
+  console.log(`  treatmentArea : ${r2.extractedSlots.treatmentArea ?? "(none)"}`);
+  console.log(`  date          : ${r2.extractedSlots.preferredDate ?? "(none)"}`);
+  console.log(`  time          : ${r2.extractedSlots.preferredTime ?? "(none)"}`);
+  console.log(`  stage after   : ${r2.nextStage}`);
+  console.log(`  reply         : ${r2.assistantReply}`);
 
+  assertDefined("treatmentArea extracted", r2.extractedSlots.treatmentArea);
   assertDefined("preferredDate extracted", r2.extractedSlots.preferredDate);
   assertDefined("preferredTime extracted", r2.extractedSlots.preferredTime);
   assertContains("preferredDate contains cumartesi", r2.extractedSlots.preferredDate ?? "", "cumartesi");
   assertDefined("reply non-empty", r2.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r2.assistantReply);
 
-  // ── Section 4: Turkish message 3 — name and phone ────────────────────────
+  // ── Section 4: Name and phone extraction ─────────────────────────────────
   console.log("\n── 4. Mesaj: İsim ve telefon ──");
 
   const PHONE_3 = "+905550000103";
   await resetStateForTest(PHONE_3);
 
-  const MSG3 = "Adım Ayşe Yılmaz, telefonum 0532 123 45 67.";
+  const MSG3 = "Adım Zeynep Arslan, telefonum 0532 123 45 67.";
   const r3 = await runPipeline(PHONE_3, MSG3);
 
-  console.log(`  intent      : ${r3.intent}`);
-  console.log(`  name        : ${r3.extractedSlots.name ?? "(none)"}`);
-  console.log(`  phone       : ${r3.extractedSlots.phone ?? "(none)"}`);
-  console.log(`  reply       : ${r3.assistantReply}`);
-  console.log(`  stage after : ${r3.nextStage}`);
+  console.log(`  intent        : ${r3.intent}`);
+  console.log(`  name          : ${r3.extractedSlots.name ?? "(none)"}`);
+  console.log(`  phone         : ${r3.extractedSlots.phone ?? "(none)"}`);
+  console.log(`  reply         : ${r3.assistantReply}`);
+  console.log(`  stage after   : ${r3.nextStage}`);
 
   assertDefined("name extracted", r3.extractedSlots.name);
   assertDefined("phone extracted", r3.extractedSlots.phone);
-  assertContains("name contains Ayşe", r3.extractedSlots.name ?? "", "Ay");
+  assertContains("name contains Zeynep", r3.extractedSlots.name ?? "", "Zeynep");
   assertDefined("reply non-empty", r3.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r3.assistantReply);
   assertDefined("stateAfter.name set", r3.stateAfter.name);
@@ -330,57 +338,58 @@ async function main() {
   // ── Section 5: Owner alert preview ───────────────────────────────────────
   console.log("\n── 5. Owner alert preview ──");
 
-  // All three first messages should trigger wouldNotifyOwner (isFirstMessage = true)
   if (r1.wouldNotifyOwner) pass("msg1 wouldNotifyOwner = true (isFirstMessage)");
   else fail("msg1 wouldNotifyOwner", "expected true for first message");
 
   if (r1.ownerAlertPreview) {
-    assertSms("owner alert valid SMS format", r1.ownerAlertPreview);
+    assertDefined("owner alert non-empty", r1.ownerAlertPreview);
     assertContains("owner alert has [RF] prefix", r1.ownerAlertPreview, "[RF]");
-    console.log(`  alert preview: ${r1.ownerAlertPreview}`);
+    assertContains("owner alert has treatmentArea", r1.ownerAlertPreview, "tüm vücut");
+    assertContains("owner alert has price flag", r1.ownerAlertPreview, "Fiyat: Evet");
+    console.log(`  alert preview:\n${r1.ownerAlertPreview.split("\n").map(l => "    " + l).join("\n")}`);
   }
 
-  // ── Section 6: Multi-turn continuity — 3 turns, same from number ─────────
+  // ── Section 6: Multi-turn continuity (3 turns, same from) ────────────────
   console.log("\n── 6. Multi-turn continuity (3 turns, same from) ──");
 
   const PHONE_MT = "+905551112233";
   await resetStateForTest(PHONE_MT);
 
-  // Turn 1: service inquiry
-  const mt1 = await runPipeline(PHONE_MT, "Merhaba lazer epilasyon fiyatı alabilir miyim?");
-  console.log(`  T1 service=${mt1.stateAfter.service ?? "(none)"} stage=${mt1.nextStage} leadScore=${mt1.stateAfter.leadScore}`);
-  assertDefined("T1: stateAfter.service set", mt1.stateAfter.service);
-  assertContains("T1: stateAfter.service = lazer epilasyon", mt1.stateAfter.service ?? "", "lazer epilasyon");
+  // T1: price + treatment area
+  const mt1 = await runPipeline(PHONE_MT, "Merhaba tüm vücut lazer epilasyon fiyatı ne kadar?");
+  console.log(`  T1 treatmentArea=${mt1.stateAfter.treatmentArea ?? "(none)"} stage=${mt1.nextStage} score=${mt1.stateAfter.leadScore}`);
+  assertDefined("T1: treatmentArea set", mt1.stateAfter.treatmentArea);
+  assertEqual("T1: stage = collect_datetime", mt1.nextStage, "collect_datetime");
+  assertEqual("T1: priceInquired", mt1.stateAfter.priceInquired, true);
 
-  // Turn 2: date/time — service must be carried over
-  const mt2 = await runPipeline(PHONE_MT, "Tüm vücut için cumartesi öğleden sonra uygun olur.");
-  console.log(`  T2 service=${mt2.stateAfter.service ?? "(none)"} date=${mt2.stateAfter.preferredDate ?? "(none)"} time=${mt2.stateAfter.preferredTime ?? "(none)"} leadScore=${mt2.stateAfter.leadScore}`);
-  assertContains("T2: stateAfter.service preserved from T1", mt2.stateAfter.service ?? "", "lazer epilasyon");
-  assertContains("T2: stateAfter.preferredDate = cumartesi", mt2.stateAfter.preferredDate ?? "", "cumartesi");
-  assertContains("T2: stateAfter.preferredTime = öğleden sonra", mt2.stateAfter.preferredTime ?? "", "öğleden sonra");
-  if (mt2.stateAfter.preferredTime === "45") fail("T2: preferredTime is not phone fragment", "got '45'");
-  else pass("T2: preferredTime is not '45'", mt2.stateAfter.preferredTime ?? "undefined");
+  // T2: first-time + date/time — treatment area must carry over
+  const mt2 = await runPipeline(PHONE_MT, "ilk kez yaptıracağım, cumartesi öğleden sonra gelebilirim.");
+  console.log(`  T2 firstTimeLaser=${mt2.stateAfter.firstTimeLaser} date=${mt2.stateAfter.preferredDate ?? "(none)"} time=${mt2.stateAfter.preferredTime ?? "(none)"} stage=${mt2.nextStage}`);
+  assertContains("T2: treatmentArea preserved from T1", mt2.stateAfter.treatmentArea ?? "", "tüm vücut");
+  assertEqual("T2: firstTimeLaser = true", mt2.stateAfter.firstTimeLaser, true);
+  assertContains("T2: preferredDate = cumartesi", mt2.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("T2: preferredTime = öğleden sonra", mt2.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertEqual("T2: stage = collect_name", mt2.nextStage, "collect_name");
 
-  // Turn 3: name + phone — all prior slots must be preserved
-  const mt3 = await runPipeline(PHONE_MT, "Adım Ayşe Yılmaz, telefonum 0532 123 45 67.");
-  console.log(`  T3 service=${mt3.stateAfter.service ?? "(none)"} name=${mt3.stateAfter.name ?? "(none)"} phone=${mt3.stateAfter.phone ?? "(none)"}`);
-  console.log(`     time=${mt3.stateAfter.preferredTime ?? "(none)"} leadScore=${mt3.stateAfter.leadScore} stage=${mt3.nextStage}`);
-  console.log(`     ownerAlert=${mt3.ownerAlertPreview ?? "(null)"}`);
+  // T3: name + phone — all prior slots must be preserved
+  const mt3 = await runPipeline(PHONE_MT, "Adım Zeynep Arslan, telefonum 0532 123 45 67.");
+  console.log(`  T3 name=${mt3.stateAfter.name ?? "(none)"} phone=${mt3.stateAfter.phone ?? "(none)"} leadScore=${mt3.stateAfter.leadScore} stage=${mt3.nextStage}`);
+  console.log(`     ownerAlert:\n${(mt3.ownerAlertPreview ?? "(null)").split("\n").map(l => "       " + l).join("\n")}`);
 
-  assertContains("T3: stateAfter.service preserved", mt3.stateAfter.service ?? "", "lazer epilasyon");
-  assertContains("T3: stateAfter.name includes Ayşe", mt3.stateAfter.name ?? "", "Ayşe");
-  assertDefined("T3: stateAfter.phone captured", mt3.stateAfter.phone);
-  assertContains("T3: stateAfter.preferredDate remains cumartesi", mt3.stateAfter.preferredDate ?? "", "cumartesi");
-  assertContains("T3: stateAfter.preferredTime remains öğleden sonra", mt3.stateAfter.preferredTime ?? "", "öğleden sonra");
-  if (mt3.stateAfter.preferredTime === "45") fail("T3: preferredTime is not phone fragment '45'", "got '45'");
-  else pass("T3: preferredTime is not '45'", mt3.stateAfter.preferredTime ?? "undefined");
+  assertContains("T3: treatmentArea preserved", mt3.stateAfter.treatmentArea ?? "", "tüm vücut");
+  assertContains("T3: name includes Zeynep", mt3.stateAfter.name ?? "", "Zeynep");
+  assertDefined("T3: phone captured", mt3.stateAfter.phone);
+  assertEqual("T3: firstTimeLaser preserved", mt3.stateAfter.firstTimeLaser, true);
+  assertContains("T3: preferredDate remains cumartesi", mt3.stateAfter.preferredDate ?? "", "cumartesi");
   assertEqual("T3: leadScore is hot", mt3.stateAfter.leadScore, "hot");
-  if (mt3.nextStage === "collect_service") fail("T3: nextStage is not collect_service", `got "${mt3.nextStage}"`);
-  else pass("T3: nextStage is not collect_service", mt3.nextStage);
-  assertDefined("T3: ownerAlertPreview is non-null", mt3.ownerAlertPreview);
-  assertContains("T3: ownerAlertPreview includes HOT", mt3.ownerAlertPreview ?? "", "HOT");
-  assertContains("T3: ownerAlertPreview includes lazer epilasyon", mt3.ownerAlertPreview ?? "", "lazer epilasyon");
-  assertContains("T3: ownerAlertPreview includes Ayşe", mt3.ownerAlertPreview ?? "", "Ayşe");
+  assertEqual("T3: stage = complete", mt3.nextStage, "complete");
+  assertDefined("T3: ownerAlertPreview non-null", mt3.ownerAlertPreview);
+  assertContains("T3: ownerAlert has HOT", mt3.ownerAlertPreview ?? "", "HOT");
+  assertContains("T3: ownerAlert has treatmentArea", mt3.ownerAlertPreview ?? "", "tüm vücut");
+  assertContains("T3: ownerAlert has Zeynep", mt3.ownerAlertPreview ?? "", "Zeynep");
+  assertContains("T3: ownerAlert has firstTimeLaser", mt3.ownerAlertPreview ?? "", "Ilk kez: Evet");
+  assertContains("T3: ownerAlert has price flag", mt3.ownerAlertPreview ?? "", "Fiyat: Evet");
+  assertContains("T3: ownerAlert has action", mt3.ownerAlertPreview ?? "", "Hizli donus");
 
   // ── Section 7: State storage mode diagnostics ────────────────────────────
   console.log("\n── 7. State storage mode diagnostics ──");
@@ -391,22 +400,18 @@ async function main() {
   console.log(`  storageMode     : ${storageMode}`);
   console.log(`  redisConfigured : ${redisConf}`);
 
-  // getStateStorageMode must return exactly "redis" or "memory"
   if (storageMode === "redis" || storageMode === "memory") {
     pass("getStateStorageMode returns valid value", storageMode);
   } else {
     fail("getStateStorageMode returns valid value", `got ${JSON.stringify(storageMode)}`);
   }
 
-  // hasRedisConfig must return a boolean
   if (typeof redisConf === "boolean") {
     pass("hasRedisConfig returns boolean", String(redisConf));
   } else {
     fail("hasRedisConfig returns boolean", `got ${typeof redisConf}`);
   }
 
-  // storageMode must be consistent with redisConf:
-  // if Redis env vars are absent, mode must be "memory"
   if (!redisConf && storageMode !== "memory") {
     fail(
       "storageMode=memory when Redis not configured",
@@ -419,9 +424,6 @@ async function main() {
   if (storageMode === "memory") {
     console.warn(
       "  [WARN] stateStorage=memory — multi-turn state will NOT persist across serverless invocations."
-    );
-    console.warn(
-      "  [WARN] Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production reliability."
     );
   } else {
     pass("Redis configured — multi-turn state will persist across invocations");
@@ -436,142 +438,166 @@ async function main() {
   assertEqual("getConversationKey is deterministic", keyA, keyB);
   assertEqual("getConversationKey format is conv:<phone>", keyA, `conv:${TEST_PHONE}`);
 
-  // Verify key is identical in read and write paths by calling the function
-  // from both sides (no aliasing — same export used everywhere).
   const readKey  = getConversationKey(TEST_PHONE);
   const writeKey = getConversationKey(TEST_PHONE);
   assertEqual("read key === write key", readKey, writeKey);
   pass("key consistency verified", readKey);
 
-  // ── Section 9: 4-turn multi-turn — full lead with location ──────────────
-  console.log("\n── 9. Multi-turn: 4 turns — full lead with location ──");
+  // ── Section 9: Demo scenario A — price inquiry triggers first-time question ─
+  console.log("\n── 9. Demo A: tüm vücut fiyat sorusu → collect_datetime ──");
 
-  const PHONE_4T = "+905551112300";
-  await resetStateForTest(PHONE_4T);
+  const PHONE_DA = "+905551112300";
+  await resetStateForTest(PHONE_DA);
 
-  const mt4_1 = await runPipeline(PHONE_4T, "Merhaba lazer epilasyon fiyatı alabilir miyim?");
-  console.log(`  T1 service=${mt4_1.stateAfter.service ?? "(none)"} stage=${mt4_1.nextStage}`);
+  const da1 = await runPipeline(PHONE_DA, "Merhaba, tüm vücut lazer epilasyon fiyatı ne kadar?");
+  console.log(`  T1 treatmentArea=${da1.stateAfter.treatmentArea ?? "(none)"} stage=${da1.nextStage} score=${da1.stateAfter.leadScore}`);
+  console.log(`  reply: ${da1.assistantReply}`);
 
-  const mt4_2 = await runPipeline(PHONE_4T, "Tüm vücut için cumartesi öğleden sonra uygun olur.");
-  console.log(`  T2 date=${mt4_2.stateAfter.preferredDate ?? "(none)"} time=${mt4_2.stateAfter.preferredTime ?? "(none)"} leadScore=${mt4_2.stateAfter.leadScore}`);
+  assertEqual("DA/T1: treatmentArea = tüm vücut", da1.stateAfter.treatmentArea, "tüm vücut");
+  assertEqual("DA/T1: stage = collect_datetime", da1.nextStage, "collect_datetime");
+  assertEqual("DA/T1: priceInquired = true", da1.stateAfter.priceInquired, true);
+  assertDefined("DA/T1: reply non-empty", da1.assistantReply);
+  assertNoProhibitedPhrases("DA/T1: no prohibited phrases", da1.assistantReply);
+  assertNotContains("DA/T1: reply must not invent price (₺)", da1.assistantReply, "₺");
+  assertNotContains("DA/T1: reply must not invent price (tl)", da1.assistantReply, " tl");
 
-  const mt4_3 = await runPipeline(PHONE_4T, "Adım Ayşe Yılmaz, telefonum 0532 123 45 67.");
-  console.log(`  T3 name=${mt4_3.stateAfter.name ?? "(none)"} phone=${mt4_3.stateAfter.phone ?? "(none)"} stage=${mt4_3.nextStage}`);
+  // ── Section 10: Demo scenario B — first-time + date ──────────────────────
+  console.log("\n── 10. Demo B: İlk kez + cumartesi (continuation of Demo A) ──");
 
-  const mt4_4 = await runPipeline(PHONE_4T, "Kadıköy şubesi uygun olur.");
-  console.log(`  T4 location=${mt4_4.stateAfter.location ?? "(none)"} stage=${mt4_4.nextStage}`);
-  console.log(`     extractedSlots=${JSON.stringify(mt4_4.extractedSlots)}`);
-  console.log(`     ownerAlert=${mt4_4.ownerAlertPreview ?? "(null)"}`);
-  console.log(`     reply=${mt4_4.assistantReply.slice(0, 80)}${mt4_4.assistantReply.length > 80 ? "..." : ""}`);
+  const db1 = await runPipeline(PHONE_DA, "ilk kez yaptıracağım, cumartesi gelebilirim.");
+  console.log(`  T2 firstTimeLaser=${db1.stateAfter.firstTimeLaser} date=${db1.stateAfter.preferredDate ?? "(none)"} stage=${db1.nextStage}`);
 
-  // Final state assertions after 4 turns
-  assertContains("T4: service = lazer epilasyon", mt4_4.stateAfter.service ?? "", "lazer epilasyon");
-  assertContains("T4: preferredDate = cumartesi", mt4_4.stateAfter.preferredDate ?? "", "cumartesi");
-  assertContains("T4: preferredTime = öğleden sonra", mt4_4.stateAfter.preferredTime ?? "", "öğleden sonra");
-  assertContains("T4: name includes Ayşe", mt4_4.stateAfter.name ?? "", "Ayşe");
-  assertDefined("T4: phone captured", mt4_4.stateAfter.phone);
-  assertEqual("T4: phone normalized", mt4_4.stateAfter.phone, "05321234567");
-  assertContains("T4: location = Kadıköy", mt4_4.stateAfter.location ?? "", "Kadıköy");
-  assertEqual("T4: location extracted in slots", mt4_4.extractedSlots.location, "Kadıköy");
-  assertEqual("T4: leadScore = hot", mt4_4.stateAfter.leadScore, "hot");
-  assertEqual("T4: stage = complete", mt4_4.nextStage, "complete");
-  assertDefined("T4: ownerAlertPreview non-null", mt4_4.ownerAlertPreview);
-  if (mt4_4.ownerAlertPreview) {
-    assertNotContains("T4: ownerAlert no 'eksik: konum'", mt4_4.ownerAlertPreview, "eksik: konum");
-    assertContains("T4: ownerAlert includes Kadıköy", mt4_4.ownerAlertPreview, "Kadıköy");
-    assertContains("T4: ownerAlert includes HOT", mt4_4.ownerAlertPreview, "HOT");
-    assertContains("T4: ownerAlert includes lazer epilasyon", mt4_4.ownerAlertPreview, "lazer epilasyon");
+  assertEqual("DB/T2: firstTimeLaser = true", db1.stateAfter.firstTimeLaser, true);
+  assertContains("DB/T2: preferredDate = cumartesi", db1.stateAfter.preferredDate ?? "", "cumartesi");
+  assertEqual("DB/T2: stage = collect_name", db1.nextStage, "collect_name");
+  assertContains("DB/T2: treatmentArea preserved", db1.stateAfter.treatmentArea ?? "", "tüm vücut");
+
+  // ── Section 11: Demo scenario C — name + phone → complete + HOT alert ────
+  console.log("\n── 11. Demo C: Zeynep, 0532... → complete + HOT ──");
+
+  const dc1 = await runPipeline(PHONE_DA, "Adım Zeynep, 05321234567.");
+  console.log(`  T3 name=${dc1.stateAfter.name ?? "(none)"} phone=${dc1.stateAfter.phone ?? "(none)"} stage=${dc1.nextStage} score=${dc1.stateAfter.leadScore}`);
+  console.log(`  ownerAlert:\n${(dc1.ownerAlertPreview ?? "(null)").split("\n").map(l => "    " + l).join("\n")}`);
+
+  assertEqual("DC/T3: stage = complete", dc1.nextStage, "complete");
+  assertEqual("DC/T3: leadScore = hot", dc1.stateAfter.leadScore, "hot");
+  assertDefined("DC/T3: ownerAlertPreview non-null", dc1.ownerAlertPreview);
+  if (dc1.ownerAlertPreview) {
+    assertContains("DC/T3: ownerAlert has HOT", dc1.ownerAlertPreview, "HOT");
+    assertContains("DC/T3: ownerAlert has treatmentArea", dc1.ownerAlertPreview, "tüm vücut");
+    assertContains("DC/T3: ownerAlert has firstTimeLaser", dc1.ownerAlertPreview, "Ilk kez: Evet");
+    assertContains("DC/T3: ownerAlert has Fiyat", dc1.ownerAlertPreview, "Fiyat: Evet");
+    assertContains("DC/T3: ownerAlert has action", dc1.ownerAlertPreview, "Hizli donus");
   }
-  // wouldLogToSheet logic mirrors /api/test/inbound route
-  const mt4_wouldLog = !!(
-    mt4_4.stateAfter.service &&
-    mt4_4.stateAfter.name &&
-    mt4_4.stateAfter.phone &&
-    (mt4_4.stateAfter.preferredDate || mt4_4.stateAfter.preferredTime) &&
-    mt4_4.stateAfter.location
+
+  // shouldLogToSheet logic
+  const dc_wouldLog = !!(
+    (dc1.stateAfter.service || dc1.stateAfter.treatmentArea) &&
+    dc1.stateAfter.name &&
+    (dc1.stateAfter.preferredDate || dc1.stateAfter.preferredTime) &&
+    dc1.stateAfter.location
   );
-  if (mt4_wouldLog) pass("T4: wouldLogToSheet = true (lead complete)");
-  else fail("T4: wouldLogToSheet = true", "lead data incomplete — missing required fields");
+  if (dc_wouldLog) pass("DC/T3: wouldLogToSheet = true (lead complete)");
+  else fail("DC/T3: wouldLogToSheet = true", "lead data incomplete — missing required fields");
 
-  // ── Section 10: 6-turn regression — single-word Turkish name ────────────
-  console.log("\n── 10. Regression: 6-turn flow with bare single-word name ──");
+  // ── Section 12: Returning customer detection ──────────────────────────────
+  console.log("\n── 12. Slot extraction: first-time and returning customer ──");
 
-  const PHONE_6T = "+905551112402";
-  await resetStateForTest(PHONE_6T);
+  const ftTests: Array<[string, boolean | undefined]> = [
+    ["ilk kez yaptıracağım", true],
+    ["İlk kez düşünüyorum", true],   // Turkish İ at sentence start
+    ["ilk defa düşünüyorum", true],
+    ["İlk defa yaptıracağım", true], // Turkish İ at sentence start
+    ["hiç yaptırmadım", true],
+    ["daha önce yaptırmadım", true],
+    ["daha önce yaptırdım devam edeyim istiyorum", false],
+    ["devam ediyorum seanslarıma", false],
+    ["yarım kaldı geçen sene", false],
+    ["tekrar başlamak istiyorum", false],
+  ];
 
-  // T1: service inquiry
-  const r6_1 = await runPipeline(PHONE_6T, "Merhaba lazer epilasyon fiyatı alabilir miyim?");
-  console.log(`  T1 service=${r6_1.stateAfter.service ?? "(none)"} stage=${r6_1.nextStage}`);
-  assertContains("R6/T1: service = lazer epilasyon", r6_1.stateAfter.service ?? "", "lazer epilasyon");
-
-  // T2: bare single-word name (regression — was silently dropped before fix)
-  const r6_2 = await runPipeline(PHONE_6T, "ayşe");
-  console.log(`  T2 name=${r6_2.stateAfter.name ?? "(none)"} stage=${r6_2.nextStage} reply="${r6_2.assistantReply.slice(0, 60)}"`);
-  assertEqual("R6/T2: name = Ayşe", r6_2.stateAfter.name, "Ayşe");
-  assertNotContains("R6/T2: reply does not re-ask name", r6_2.assistantReply, "isminizi");
-
-  // T3: phone number
-  const r6_3 = await runPipeline(PHONE_6T, "Telefonum 0532 123 45 67");
-  console.log(`  T3 phone=${r6_3.stateAfter.phone ?? "(none)"} name=${r6_3.stateAfter.name ?? "(none)"}`);
-  assertEqual("R6/T3: phone normalized", r6_3.stateAfter.phone, "05321234567");
-  assertContains("R6/T3: name still Ayşe", r6_3.stateAfter.name ?? "", "Ayşe");
-
-  // T4: service detail — must not accidentally overwrite name
-  const r6_4 = await runPipeline(PHONE_6T, "Tüm vücut düşünüyorum");
-  console.log(`  T4 name=${r6_4.stateAfter.name ?? "(none)"} service=${r6_4.stateAfter.service ?? "(none)"}`);
-  assertContains("R6/T4: name still Ayşe", r6_4.stateAfter.name ?? "", "Ayşe");
-  assertContains("R6/T4: service preserved", r6_4.stateAfter.service ?? "", "lazer epilasyon");
-
-  // T5: date and time
-  const r6_5 = await runPipeline(PHONE_6T, "Cumartesi öğleden sonra uygun olur");
-  console.log(`  T5 date=${r6_5.stateAfter.preferredDate ?? "(none)"} time=${r6_5.stateAfter.preferredTime ?? "(none)"}`);
-  assertContains("R6/T5: preferredDate = cumartesi", r6_5.stateAfter.preferredDate ?? "", "cumartesi");
-  assertContains("R6/T5: preferredTime = öğleden sonra", r6_5.stateAfter.preferredTime ?? "", "öğleden sonra");
-  assertNotContains("R6/T5: reply does not ask for phone", r6_5.assistantReply, "telefon");
-
-  // T6: location → stage must reach complete
-  const r6_6 = await runPipeline(PHONE_6T, "Kadıköy şubesi uygun olur.");
-  console.log(`  T6 location=${r6_6.stateAfter.location ?? "(none)"} stage=${r6_6.nextStage}`);
-  console.log(`     ownerAlert=${r6_6.ownerAlertPreview ?? "(null)"}`);
-  console.log(`     reply=${r6_6.assistantReply.slice(0, 80)}${r6_6.assistantReply.length > 80 ? "..." : ""}`);
-
-  assertEqual("R6/T6: name = Ayşe", r6_6.stateAfter.name, "Ayşe");
-  assertEqual("R6/T6: phone normalized", r6_6.stateAfter.phone, "05321234567");
-  assertContains("R6/T6: service = lazer epilasyon", r6_6.stateAfter.service ?? "", "lazer epilasyon");
-  assertContains("R6/T6: preferredDate = cumartesi", r6_6.stateAfter.preferredDate ?? "", "cumartesi");
-  assertContains("R6/T6: preferredTime = öğleden sonra", r6_6.stateAfter.preferredTime ?? "", "öğleden sonra");
-  assertContains("R6/T6: location = Kadıköy", r6_6.stateAfter.location ?? "", "Kadıköy");
-  assertEqual("R6/T6: stage = complete", r6_6.nextStage, "complete");
-  assertEqual("R6/T6: leadScore = hot", r6_6.stateAfter.leadScore, "hot");
-  assertDefined("R6/T6: ownerAlertPreview non-null", r6_6.ownerAlertPreview);
-  if (r6_6.ownerAlertPreview) {
-    assertContains("R6/T6: ownerAlert includes Ayşe", r6_6.ownerAlertPreview, "Ayşe");
-    assertContains("R6/T6: ownerAlert includes Kadıköy", r6_6.ownerAlertPreview, "Kadıköy");
-    assertContains("R6/T6: ownerAlert includes HOT", r6_6.ownerAlertPreview, "HOT");
-    assertContains("R6/T6: ownerAlert includes lazer epilasyon", r6_6.ownerAlertPreview, "lazer epilasyon");
+  for (const [msg, expected] of ftTests) {
+    const s = extractSlots(msg);
+    assertEqual(`FT: "${msg.slice(0, 40)}" → firstTimeLaser`, s.firstTimeLaser, expected);
   }
-  // Critical regression assertion — reply must NOT ask for name again
-  assertNotContains("R6/T6: reply does not re-ask name (regression)", r6_6.assistantReply, "isminizi öğrenebilir");
-  assertNotContains("R6/T6: reply does not ask for phone", r6_6.assistantReply, "telefon numaranız");
-  assertNotContains("R6/T6: reply does not re-ask location", r6_6.assistantReply, "şubemizi tercih");
-  const r6_wouldLog = !!(
-    r6_6.stateAfter.service &&
-    r6_6.stateAfter.name &&
-    r6_6.stateAfter.phone &&
-    (r6_6.stateAfter.preferredDate || r6_6.stateAfter.preferredTime) &&
-    r6_6.stateAfter.location
-  );
-  if (r6_wouldLog) pass("R6/T6: wouldLogToSheet = true");
-  else fail("R6/T6: wouldLogToSheet = true", "lead data incomplete");
 
-  // ── Section 11: Structured Turkish label extraction ─────────────────────
-  console.log("\n── 11. Structured Turkish label extraction ──");
+  // ── Section 13: Treatment area extraction ─────────────────────────────────
+  console.log("\n── 13. Slot extraction: treatment areas ──");
+
+  const areaTests: Array<[string, string]> = [
+    ["Tüm vücut lazer istiyorum", "tüm vücut"],
+    ["full body epilasyon fiyatı", "tüm vücut"],
+    ["koltuk altı için randevu", "koltuk altı"],
+    ["koltukaltı lazer", "koltuk altı"],
+    ["bacak epilasyon", "bacak"],
+    ["bikini bölge lazer", "bikini"],
+    ["dudak üstü tüy sorunu", "dudak üstü"],
+    ["bıyık bölgesi lazer", "dudak üstü"],
+    ["üst dudak epilasyon", "dudak üstü"],
+    ["çene bölgesi", "çene"],
+    ["sırt lazer", "sırt"],
+    ["göğüs bölgesi", "göğüs"],
+    ["genital bölge lazer", "genital"],
+  ];
+
+  for (const [msg, expectedArea] of areaTests) {
+    const s = extractSlots(msg);
+    assertEqual(`AREA: "${msg.slice(0, 40)}" → ${expectedArea}`, s.treatmentArea, expectedArea);
+  }
+
+  // ── Section 14: Price inquiry detection ───────────────────────────────────
+  console.log("\n── 14. Slot extraction: price inquiry detection ──");
+
+  const priceTests: Array<[string, boolean]> = [
+    ["lazer epilasyon fiyatı ne kadar?", true],
+    ["tüm vücut ücret bilgisi alabilir miyim", true],
+    ["kampanya var mı?", true],
+    ["paket fiyatları nasıl?", true],
+    ["indirim yapıyor musunuz", true],
+    ["cumartesi gelebilir miyim", false],
+    ["ilk kez yaptıracağım", false],
+  ];
+
+  for (const [msg, expected] of priceTests) {
+    const s = extractSlots(msg);
+    const actual = s.priceInquired === true;
+    if (actual === expected) pass(`PRICE: "${msg.slice(0, 45)}" → ${expected}`);
+    else fail(`PRICE: "${msg.slice(0, 45)}"`, `got priceInquired=${s.priceInquired}, expected ${expected}`);
+  }
+
+  // ── Section 15: Lead score from state ─────────────────────────────────────
+  console.log("\n── 15. Lead score from accumulated state ──");
+
+  // Cold: nothing
+  assertEqual("SCORE: cold (empty state)", calculateLeadScoreFromState({}), "cold");
+
+  // Warm: service only
+  assertEqual("SCORE: warm (service only)", calculateLeadScoreFromState({ service: "lazer epilasyon" }), "warm");
+
+  // Warm: price + service (no date yet)
+  assertEqual("SCORE: warm (price+service, no date)", calculateLeadScoreFromState({ service: "lazer epilasyon", priceInquired: true }), "warm");
+
+  // Hot: service + datetime
+  assertEqual("SCORE: hot (service+date)", calculateLeadScoreFromState({ service: "lazer epilasyon", preferredDate: "cumartesi" }), "hot");
+
+  // Hot: treatmentArea + datetime
+  assertEqual("SCORE: hot (area+date)", calculateLeadScoreFromState({ treatmentArea: "bacak", preferredDate: "yarın" }), "hot");
+
+  // Hot: service + datetime + contact
+  assertEqual("SCORE: hot (full)", calculateLeadScoreFromState({ service: "lazer epilasyon", preferredDate: "cumartesi", name: "Zeynep" }), "hot");
+
+  // Hot: urgency
+  assertEqual("SCORE: hot (urgent)", calculateLeadScoreFromState({ urgency: "high" }), "hot");
+
+  // ── Section 16: Structured message — single-turn complete ─────────────────
+  console.log("\n── 16. Structured message: single-turn complete ──");
 
   const structuredMsg = [
-    "İsim: Aylin",
-    "Telefon: 05313456576",
+    "İsim: Zeynep Arslan",
+    "Telefon: 05321234567",
     "Hizmet: lazer epilasyon",
-    "Zaman: pazar öğleden sonra 2",
+    "Bölge: tüm vücut",
+    "Zaman: cumartesi öğleden sonra",
     "Şube: Ümraniye",
   ].join("\n");
 
@@ -579,147 +605,34 @@ async function main() {
   console.log(`  name          : ${sSlots.name ?? "(none)"}`);
   console.log(`  phone         : ${sSlots.phone ?? "(none)"}`);
   console.log(`  service       : ${sSlots.service ?? "(none)"}`);
+  console.log(`  treatmentArea : ${sSlots.treatmentArea ?? "(none)"}`);
   console.log(`  preferredDate : ${sSlots.preferredDate ?? "(none)"}`);
   console.log(`  preferredTime : ${sSlots.preferredTime ?? "(none)"}`);
   console.log(`  location      : ${sSlots.location ?? "(none)"}`);
 
-  assertEqual("S1: name = Aylin", sSlots.name, "Aylin");
-  assertEqual("S1: phone = 05313456576", sSlots.phone, "05313456576");
+  assertContains("S1: name includes Zeynep", sSlots.name ?? "", "Zeynep");
+  assertEqual("S1: phone", sSlots.phone, "05321234567");
   assertContains("S1: service = lazer epilasyon", sSlots.service ?? "", "lazer epilasyon");
-  assertContains("S1: preferredDate = pazar", sSlots.preferredDate ?? "", "pazar");
-  if (
-    (sSlots.preferredTime ?? "").includes("öğleden sonra") ||
-    (sSlots.preferredTime ?? "").includes("2")
-  ) {
-    pass("S1: preferredTime contains öğleden sonra or 2", sSlots.preferredTime ?? "");
-  } else {
-    fail("S1: preferredTime contains öğleden sonra or 2", `got ${JSON.stringify(sSlots.preferredTime)}`);
-  }
+  assertEqual("S1: treatmentArea = tüm vücut", sSlots.treatmentArea, "tüm vücut");
+  assertContains("S1: preferredDate = cumartesi", sSlots.preferredDate ?? "", "cumartesi");
+  assertContains("S1: preferredTime = öğleden sonra", sSlots.preferredTime ?? "", "öğleden sonra");
   assertEqual("S1: location = Ümraniye", sSlots.location, "Ümraniye");
 
-  // Pipeline stage must reach complete for the structured message
+  // Structured message must reach complete in a single pipeline turn
+  // (firstTimeLaser is advisory — its absence does not block completion)
   const PHONE_S1 = "+905551112500";
   await resetStateForTest(PHONE_S1);
   const sr1 = await runPipeline(PHONE_S1, structuredMsg);
-  assertEqual("S1: stage = complete", sr1.nextStage, "complete");
+  assertEqual("S1: stage = complete (firstTimeLaser advisory, not required)", sr1.nextStage, "complete");
 
-  // Individual label patterns
-  assertEqual("S2: Şube: Kadıköy → Kadıköy", extractSlots("Şube: Kadıköy").location, "Kadıköy");
-  assertEqual("S3: Konum: Ataşehir → Ataşehir", extractSlots("Konum: Ataşehir").location, "Ataşehir");
-  assertEqual("S4: Lokasyon: Beşiktaş → Beşiktaş", extractSlots("Lokasyon: Beşiktaş").location, "Beşiktaş");
-  assertEqual("S5: Ümraniye şubesi uygun → Ümraniye", extractSlots("Ümraniye şubesi uygun").location, "Ümraniye");
-
-  // ── Section 12: Flow A — saç boyama fiyat sorusu ────────────────────────
-  console.log("\n── 12. Flow A: saç boyama fiyat sorusu ──");
-
-  const PHONE_FA = "+905551112601";
-  await resetStateForTest(PHONE_FA);
-
-  const flowA_slots = extractSlots("Merhaba saç boyama fiyatı alabilir miyim?");
-  console.log(`  service : ${flowA_slots.service ?? "(none)"}`);
-  assertEqual("FA: service = saç boyama", flowA_slots.service, "saç boyama");
-
-  const fa = await runPipeline(PHONE_FA, "Merhaba saç boyama fiyatı alabilir miyim?");
-  console.log(`  intent  : ${fa.intent}`);
-  console.log(`  stage   : ${fa.nextStage}`);
-  console.log(`  reply   : ${fa.assistantReply}`);
-  assertDefined("FA: reply non-empty", fa.assistantReply);
-  assertNoProhibitedPhrases("FA: no prohibited phrases", fa.assistantReply);
-  assertNotContains("FA: reply must not invent price (₺)", fa.assistantReply, "₺");
-  assertNotContains("FA: reply must not invent price (tl)", fa.assistantReply, " tl");
-
-  // ── Section 13: Flow B — kaş alma tarih sorusu ───────────────────────────
-  console.log("\n── 13. Flow B: kaş alma için cumartesi ──");
-
-  const flowB_slots = extractSlots("Kaş alma için cumartesi uygun musunuz?");
-  console.log(`  service       : ${flowB_slots.service ?? "(none)"}`);
-  console.log(`  preferredDate : ${flowB_slots.preferredDate ?? "(none)"}`);
-  assertEqual("FB: service = kaş alma", flowB_slots.service, "kaş alma");
-  assertContains("FB: preferredDate = cumartesi", flowB_slots.preferredDate ?? "", "cumartesi");
-
-  // ── Section 14: Flow C — structured salon message (location-optional pilot) ──
-  console.log("\n── 14. Flow C: yapılandırılmış mesaj — konum isteğe bağlı ──");
-
-  const salonStructuredMsg = [
-    "İsim: Aylin",
-    "Telefon: 05313456576",
-    "Hizmet: saç boyama",
-    "Zaman: cumartesi öğleden sonra",
-  ].join("\n");
-
-  const fc_slots = extractSlots(salonStructuredMsg);
-  console.log(`  name          : ${fc_slots.name ?? "(none)"}`);
-  console.log(`  phone         : ${fc_slots.phone ?? "(none)"}`);
-  console.log(`  service       : ${fc_slots.service ?? "(none)"}`);
-  console.log(`  preferredDate : ${fc_slots.preferredDate ?? "(none)"}`);
-  console.log(`  preferredTime : ${fc_slots.preferredTime ?? "(none)"}`);
-
-  assertEqual("FC: name = Aylin", fc_slots.name, "Aylin");
-  assertEqual("FC: phone = 05313456576", fc_slots.phone, "05313456576");
-  assertEqual("FC: service = saç boyama", fc_slots.service, "saç boyama");
-  assertContains("FC: preferredDate = cumartesi", fc_slots.preferredDate ?? "", "cumartesi");
-  assertContains("FC: preferredTime = öğleden sonra", fc_slots.preferredTime ?? "", "öğleden sonra");
-
-  const PHONE_FC = "+905551112602";
-  await resetStateForTest(PHONE_FC);
-  const fc = await runPipeline(PHONE_FC, salonStructuredMsg);
-  console.log(`  stage         : ${fc.nextStage}`);
-  console.log(`  location      : ${fc.stateAfter.location ?? "(none)"}`);
-  assertEqual("FC: stage = complete (location optional)", fc.nextStage, "complete");
-  assertDefined("FC: location defaulted to Ümraniye", fc.stateAfter.location);
-  assertContains("FC: location = Ümraniye", fc.stateAfter.location ?? "", "Ümraniye");
-
-  // ── Section 15: Flow D — mikroblading fiyat sorusu ──────────────────────
-  console.log("\n── 15. Flow D: mikroblading fiyat sorusu ──");
-
-  const PHONE_FD = "+905551112603";
-  await resetStateForTest(PHONE_FD);
-
-  const flowD_slots = extractSlots("Mikroblading yaptırmak istiyorum fiyat nedir?");
-  console.log(`  service : ${flowD_slots.service ?? "(none)"}`);
-  assertEqual("FD: service = mikroblading", flowD_slots.service, "mikroblading");
-
-  const fd = await runPipeline(PHONE_FD, "Mikroblading yaptırmak istiyorum fiyat nedir?");
-  console.log(`  intent  : ${fd.intent}`);
-  console.log(`  reply   : ${fd.assistantReply}`);
-  assertDefined("FD: reply non-empty", fd.assistantReply);
-  assertNoProhibitedPhrases("FD: no prohibited phrases", fd.assistantReply);
-  assertNotContains("FD: reply must not invent price (₺)", fd.assistantReply, "₺");
-  assertNotContains("FD: reply must not invent price (tl)", fd.assistantReply, " tl");
-
-  // ── Section 16: Beauty service slot extraction unit tests ────────────────
-  console.log("\n── 16. Beauty service extraction unit tests ──");
-
-  const svcTests: Array<[string, string]> = [
-    ["ağda yaptırmak istiyorum", "ağda"],
-    ["Kaş alma için randevu istiyorum", "kaş alma"],
-    ["kaş tasarımı yaptırmak istiyorum", "kaş tasarımı"],
-    ["Mikroblading hakkında bilgi almak istiyorum", "mikroblading"],
-    ["kirpik lifting randevusu alabilir miyim?", "kirpik lifting"],
-    ["ipek kirpik yaptırmak istiyorum", "ipek kirpik"],
-    ["cilt bakımı için uygun gününüz var mı?", "cilt bakımı"],
-    ["Manikür yaptırmak istiyorum", "manikür"],
-    ["pedikür randevusu istiyorum", "pedikür"],
-    ["Protez tırnak için fiyat soruyorum", "protez tırnak"],
-    ["saç kesimi için cumartesi uygun mu?", "saç kesimi"],
-    ["saç boyama istiyorum", "saç boyama"],
-    ["Dip boya yaptırmak istiyorum", "dip boya"],
-    ["röfle yaptırmak istiyorum", "röfle"],
-    ["Ombre saç istiyorum", "ombre"],
-    ["Fön için randevu", "fön"],
-    ["saç kaynaklama fiyatları nedir?", "saç kaynaklama"],
-    ["saç kaynak istiyorum", "saç kaynaklama"],
-    ["gelin saçı için randevu almak istiyorum", "gelin saçı"],
-    ["makyaj randevusu istiyorum", "makyaj"],
-    ["saç bakımı için uygun gün var mı?", "saç bakımı"],
-    ["keratin bakım yaptırmak istiyorum", "keratin bakımı"],
-    ["protez tırnak fiyatı nedir?", "protez tırnak"],
-  ];
-
-  for (const [msg, expectedService] of svcTests) {
-    const slots = extractSlots(msg);
-    assertEqual(`SVC: "${msg.slice(0, 35)}" → ${expectedService}`, slots.service, expectedService);
-  }
+  // With firstTimeLaser in a short single message that stays under SMS_MAX_CHARS (120):
+  // sanitizeSmsText collapses newlines to spaces and truncates at 120 chars —
+  // a multi-line join of all fields exceeds that limit, so we use a condensed inline message.
+  const PHONE_S2 = "+905551112501";
+  await resetStateForTest(PHONE_S2);
+  const shortFullMsg = "İsim: Zeynep Tel: 05321234567 lazer epilasyon bacak ilk kez cumartesi ogleden sonra";
+  const sr2 = await runPipeline(PHONE_S2, shortFullMsg);
+  assertEqual("S2: stage = complete (all fields incl firstTimeLaser in one message)", sr2.nextStage, "complete");
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

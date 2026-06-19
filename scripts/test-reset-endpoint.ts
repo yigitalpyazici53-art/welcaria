@@ -151,7 +151,7 @@ async function main() {
   const PHONE_TEST = "905551119900";
 
   // Write some state so there is something to clear
-  await updateState(PHONE_TEST, { name: "Test User", stage: "collect_service" });
+  await updateState(PHONE_TEST, { name: "Test User", stage: "collect_treatment_area" });
   const stateBeforeReset = await getState(PHONE_TEST);
   console.log(`  state before reset: stage=${stateBeforeReset.stage} name=${stateBeforeReset.name ?? "(none)"}`);
 
@@ -165,7 +165,7 @@ async function main() {
   const stateAfterReset = await getState(PHONE_TEST);
   console.log(`  state after reset: stage=${stateAfterReset.stage} history.length=${stateAfterReset.history.length}`);
 
-  assertEqual("stage after reset = collect_name", stateAfterReset.stage, "collect_name");
+  assertEqual("stage after reset = collect_treatment_area", stateAfterReset.stage, "collect_treatment_area");
   assertEqual("history empty after reset", stateAfterReset.history.length, 0);
 
   // ── Section 4: Reset '+'-prefixed phone number ────────────────────────────
@@ -173,7 +173,7 @@ async function main() {
 
   const PHONE_PLUS_TEST = "+905551119901";
 
-  await updateState(PHONE_PLUS_TEST, { name: "Test User 2", stage: "collect_service" });
+  await updateState(PHONE_PLUS_TEST, { name: "Test User 2", stage: "collect_treatment_area" });
   const stateBeforeReset2 = await getState(PHONE_PLUS_TEST);
   console.log(`  state before reset: stage=${stateBeforeReset2.stage} name=${stateBeforeReset2.name ?? "(none)"}`);
 
@@ -187,7 +187,7 @@ async function main() {
   const stateAfterReset2 = await getState(PHONE_PLUS_TEST);
   console.log(`  state after reset: stage=${stateAfterReset2.stage} history.length=${stateAfterReset2.history.length}`);
 
-  assertEqual("stage after reset = collect_name", stateAfterReset2.stage, "collect_name");
+  assertEqual("stage after reset = collect_treatment_area", stateAfterReset2.stage, "collect_treatment_area");
   assertEqual("history empty after reset", stateAfterReset2.history.length, 0);
 
   // ── Section 5: Simulated endpoint response shape ──────────────────────────

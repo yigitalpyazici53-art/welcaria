@@ -244,9 +244,9 @@ function testSlotExtractor(): void {
     fail("t3: preferredTime should be undefined (not phone fragment)", `got "${t3.preferredTime}"`);
   }
 
-  // T4: Urgent dental appointment
-  const t4 = extractSlots("Bugün acil diş randevusu almak istiyorum.");
-  assertContains("t4: service is diş tedavisi", t4.service ?? "", "diş");
+  // T4: Urgent laser epilasyon request
+  const t4 = extractSlots("Bugün acil lazer epilasyon randevusu lazım, bekleyemem.");
+  assertContains("t4: service is lazer epilasyon", t4.service ?? "", "lazer epilasyon");
   assertEqual("t4: urgency=high", t4.urgency, "high");
   assertEqual("t4: leadScore=hot (urgent)", t4.leadScore, "hot");
 
@@ -345,30 +345,26 @@ async function testConversationState(): Promise<void> {
   const phone = "+905000000001";
   await resetState(phone);
 
-  // Initial stage must be collect_name
+  // Initial stage must be collect_treatment_area
   let state = await getState(phone);
-  assertEqual("initial stage=collect_name", state.stage, "collect_name");
+  assertEqual("initial stage=collect_treatment_area", state.stage, "collect_treatment_area");
 
-  // After name → collect_service
-  state = await updateState(phone, { name: "Ayse" });
-  assertEqual("getNextStage after name=collect_service", getNextStage(state), "collect_service");
+  // After treatmentArea → collect_datetime (firstTimeLaser is advisory, not a gate)
+  state = await updateState(phone, { treatmentArea: "tüm vücut", service: "lazer epilasyon" });
+  assertEqual("getNextStage after treatmentArea=collect_datetime", getNextStage(state), "collect_datetime");
 
-  // After service → collect_datetime
-  state = await updateState(phone, { service: "manikur" });
-  assertEqual("getNextStage after service=collect_datetime", getNextStage(state), "collect_datetime");
-
-  // After date → complete (single-location pilot: collect_location is skipped)
+  // After date → collect_name
   state = await updateState(phone, { preferredDate: "cumartesi" });
-  assertEqual("getNextStage after date=complete (location optional)", getNextStage(state), "complete");
+  assertEqual("getNextStage after date=collect_name", getNextStage(state), "collect_name");
 
-  // After location → complete (still complete when location is also present)
-  state = await updateState(phone, { location: "Kadikoy subesi" });
-  assertEqual("getNextStage after location=complete", getNextStage(state), "complete");
+  // After name → complete
+  state = await updateState(phone, { name: "Ayse" });
+  assertEqual("getNextStage after name=complete", getNextStage(state), "complete");
 
   console.log(
-    `  Final state: name=${state.name} service=${state.service} date=${state.preferredDate} stage=${getNextStage(state)}`
+    `  Final state: treatmentArea=${state.treatmentArea} date=${state.preferredDate} name=${state.name} stage=${getNextStage(state)}`
   );
-  pass("all stages traversed: collect_name -> collect_service -> collect_datetime -> complete");
+  pass("all stages traversed: collect_treatment_area -> collect_datetime -> collect_name -> complete");
 }
 
 // ── 6. updateState undefined-filter test ─────────────────────────────────
@@ -379,13 +375,13 @@ async function testUpdateStateUndefinedFilter(): Promise<void> {
   const phone = "+905000000002";
   await resetState(phone);
 
-  await updateState(phone, { name: "Mehmet", service: "sac bakimi" });
+  await updateState(phone, { name: "Mehmet", service: "lazer epilasyon" });
 
   // Partial update — only urgency; name/service must be preserved
   await updateState(phone, { urgency: "medium" });
   let state = await getState(phone);
   assertEqual("name preserved after partial update", state.name, "Mehmet");
-  assertEqual("service preserved after partial update", state.service, "sac bakimi");
+  assertEqual("service preserved after partial update", state.service, "lazer epilasyon");
   assertEqual("urgency added by partial update", state.urgency, "medium");
 
   // Explicit undefined must not wipe stored value
@@ -404,16 +400,16 @@ async function testStateTtlExpiry(): Promise<void> {
   const phone = "+905000000003";
   await resetState(phone);
 
-  await updateState(phone, { service: "pedikur", name: "Zeynep", urgency: "low" });
+  await updateState(phone, { service: "lazer epilasyon", treatmentArea: "bacak", name: "Zeynep", urgency: "low" });
   let state = await getState(phone);
-  assertEqual("pre-expiry: service present", state.service, "pedikur");
+  assertEqual("pre-expiry: service present", state.service, "lazer epilasyon");
 
   // Age the entry 25h past the 24h TTL
   const aged = { ...state, lastUpdated: Date.now() - 25 * 60 * 60 * 1000 };
   await _setStateForTest(phone, aged);
 
   state = await getState(phone);
-  assertEqual("post-expiry: stage reset to collect_name", state.stage, "collect_name");
+  assertEqual("post-expiry: stage reset to collect_treatment_area", state.stage, "collect_treatment_area");
   if (state.service === undefined) {
     pass("post-expiry: service cleared");
   } else {
@@ -474,12 +470,13 @@ async function testPrompt(): Promise<void> {
   assertNotContains("prompt: no 'fixture'", prompt, "fixture");
   assertNotContains("prompt: no 'plumbing'", prompt, "plumbing");
 
-  // Stage-specific instruction should reference name collection
-  if (prompt.includes("isim") || prompt.includes("ad") || prompt.includes("isminizi")) {
-    pass("prompt contains collect_name stage instruction");
-  } else {
-    fail("prompt contains collect_name stage instruction", "no name-collection keyword found");
-  }
+  // Must describe laser/aesthetic center persona
+  assertContains("prompt: mentions lazer epilasyon", prompt, "lazer epilasyon");
+  assertContains("prompt: mentions estetik", prompt, "estetik");
+  assertContains("prompt: fiyat uydurmama policy", prompt, "fiyat");
+  assertContains("prompt: no medical advice policy", prompt, "tıbbi");
+  // Stage instruction for initial stage should reference treatment area
+  assertContains("prompt: collect_treatment_area instruction mentions bölge", prompt, "bölge");
 }
 
 // ── 10. Owner alert format tests ──────────────────────────────────────────
@@ -490,37 +487,44 @@ async function testOwnerAlertFormat(): Promise<void> {
   const phone = "+905000000020";
   await resetState(phone);
 
-  // Partial state: service only
+  // Partial state: service + treatment area, warm lead
+  // buildOwnerAlert returns multiline content — don't check SMS limit on the raw alert
   let state = await updateState(phone, {
-    service: "manikur",
+    service: "lazer epilasyon",
+    treatmentArea: "tüm vücut",
     urgency: "medium",
     leadScore: "warm",
   });
 
   const alert1 = buildOwnerAlert(phone, state);
   console.log(`  Alert (partial): "${alert1}"`);
-  assertSms("partial-state alert fits SMS limit", alert1);
   assertContains("partial alert has [RF]", alert1, "[RF]");
   assertContains("partial alert has WARM", alert1, "WARM");
-  assertContains("partial alert has manikur", alert1, "manikur");
-  assertContains("partial alert shows missing tarih", alert1, "tarih");
-  assertContains("partial alert shows missing konum", alert1, "konum");
+  assertContains("partial alert has lazer epilasyon", alert1, "lazer epilasyon");
+  assertContains("partial alert has treatment area", alert1, "tüm vücut");
 
-  // Full state
+  // Full hot state: all laser/aesthetic fields populated
   const fullState = await updateState(phone, {
     name: "Ayse",
-    preferredDate: "yarin",
+    phone: "+905321234567",
+    preferredDate: "cumartesi",
     preferredTime: "14:00",
-    location: "Kadikoy",
+    firstTimeLaser: true,
+    priceInquired: true,
     leadScore: "hot",
     stage: "complete",
   });
   const alert2 = buildOwnerAlert(phone, fullState);
   console.log(`  Alert (full):    "${alert2}"`);
-  assertSms("full-state alert fits SMS limit", alert2);
   assertContains("full alert has HOT", alert2, "HOT");
+  assertContains("full alert has lazer epilasyon", alert2, "lazer epilasyon");
+  assertContains("full alert has tüm vücut", alert2, "tüm vücut");
   assertContains("full alert has name Ayse", alert2, "Ayse");
-  assertContains("full alert has yarin", alert2, "yarin");
+  assertContains("full alert has phone (Tel:)", alert2, "Tel:");
+  assertContains("full alert has first-time status", alert2, "Ilk kez");
+  assertContains("full alert has price inquiry", alert2, "Fiyat: Evet");
+  assertContains("full alert has preferred date", alert2, "cumartesi");
+  assertContains("hot alert has Hizli donus yapilmali", alert2, "Hizli donus yapilmali");
 }
 
 // ── 11. Service conflict detection ────────────────────────────────────────
@@ -531,26 +535,28 @@ async function testServiceConflict(): Promise<void> {
   const phone = "+905000000030";
   await resetState(phone);
 
-  let state = await updateState(phone, { service: "manikur", name: "Fatma" });
+  // State has one treatment area; user now mentions a different area
+  // Use short area names (bacak / bikini) so the conflict reply fits the SMS limit
+  let state = await updateState(phone, { service: "lazer epilasyon", treatmentArea: "bacak", name: "Fatma" });
 
-  // User now mentions a different service
-  const extracted = extractSlots("Lazer epilasyon fiyati nedir?");
+  // User mentions a different treatment area — should trigger a conflict
+  const extracted = extractSlots("Bikini lazer epilasyon fiyatı?");
   const conflict = detectConflict(state, extracted);
 
   if (conflict) {
-    pass("conflict detected for different services", conflict.slice(0, 60));
+    pass("conflict detected for different treatment areas", conflict.slice(0, 60));
     assertSms("conflict reply fits SMS limit", conflict);
   } else {
-    pass("no conflict returned (services may differ by canonical name)");
+    pass("no conflict returned (areas may differ by canonical name)");
   }
 
-  // No conflict when same service
-  const extracted2 = extractSlots("Manikur icin randevu almak istiyorum.");
+  // No conflict when same treatment area
+  const extracted2 = extractSlots("Bacak bölgesi için randevu almak istiyorum.");
   const noConflict = detectConflict(state, extracted2);
   if (noConflict === null) {
-    pass("no conflict when services match");
+    pass("no conflict when treatment areas match");
   } else {
-    console.log(`  [INFO] conflict check for same service returned: "${noConflict}"`);
+    console.log(`  [INFO] conflict check for same area returned: "${noConflict}"`);
     pass("conflict check executed without error");
   }
 }
@@ -589,7 +595,53 @@ async function testLeadScoreMultiTurn(): Promise<void> {
   assertDefined("accumulated phone", state.phone);
 }
 
-// ── 13. End-to-end Claude API scenarios ───────────────────────────────────
+// ── 13. Demo scenario tests ───────────────────────────────────────────────
+
+function testDemoScenarios(): void {
+  header("Demo scenario tests: laser/aesthetic lead extraction");
+
+  // A) Price inquiry for full body laser epilasyon
+  const a = extractSlots("Merhaba, tüm vücut lazer epilasyon fiyatı ne kadar?");
+  assertContains("A: service lazer epilasyon", a.service ?? "", "lazer epilasyon");
+  assertContains("A: treatmentArea tüm vücut", a.treatmentArea ?? "", "tüm vücut");
+  if (a.priceInquired) {
+    pass("A: priceInquired=true");
+  } else {
+    fail("A: priceInquired should be true", "was falsy");
+  }
+  if (a.leadScore === "warm" || a.leadScore === "hot") {
+    pass("A: leadScore warm or hot", a.leadScore ?? "undefined");
+  } else {
+    fail("A: leadScore should be warm or hot", `got "${a.leadScore}"`);
+  }
+
+  // B) First-time signal + day preference
+  const b = extractSlots("İlk kez yaptıracağım, cumartesi gelebilirim.");
+  if (b.firstTimeLaser === true) {
+    pass("B: firstTimeLaser=true");
+  } else {
+    fail("B: firstTimeLaser should be true", `got "${b.firstTimeLaser}"`);
+  }
+  assertContains("B: preferredDate includes cumartesi", b.preferredDate ?? "", "cumartesi");
+
+  // C) Name introduction with phone — use explicit prefix so NAME_PATTERNS captures the name
+  const c = extractSlots("Ben Zeynep, 0532 111 22 33");
+  assertDefined("C: name defined", c.name);
+  if (c.name) {
+    assertContains("C: name includes Zeynep", c.name, "Zeynep");
+  }
+  assertDefined("C: phone defined", c.phone);
+  if (c.phone) {
+    const normalized = normalizePhone(c.phone);
+    if (normalized.startsWith("05321") || normalized.startsWith("90532")) {
+      pass("C: phone extracted correctly", normalized);
+    } else {
+      fail("C: phone starts with expected prefix", `got "${normalized}"`);
+    }
+  }
+}
+
+// ── 14. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
   phone: string,
@@ -638,22 +690,22 @@ async function testApiScenarios(): Promise<void> {
   // Flow B: appointment request with date
   await runApiScenario(
     "+905000000101",
-    ["Cumartesi ogleden sonra manikur randevusu almak istiyorum."],
-    "Flow B: appointment request with date"
+    ["Cumartesi ogleden sonra tum vucut lazer epilasyon randevusu almak istiyorum."],
+    "Flow B: laser epilasyon appointment with date"
   );
 
   // Flow C: incremental — name then service
   await runApiScenario(
     "+905000000102",
-    ["Merhaba, adim Kemal.", "Sac kesimi yaptirmak istiyorum."],
-    "Flow C: incremental name then service"
+    ["Merhaba, adim Kemal.", "Koltuk alti lazer epilasyon fiyati nedir?"],
+    "Flow C: incremental name then laser service"
   );
 
   // Flow D: urgent request
   await runApiScenario(
     "+905000000103",
-    ["Bugun acil dis randevusu lazim!"],
-    "Flow D: urgent dental request"
+    ["Bugun acil lazer epilasyon randevusu lazim, bekleyemem!"],
+    "Flow D: urgent laser epilasyon request"
   );
 
   // Flow E: location question
@@ -681,6 +733,7 @@ async function main() {
   await testStateTtlExpiry();
   testLeadScores();
   await testLeadScoreMultiTurn();
+  testDemoScenarios();
   await testPrompt();
   await testOwnerAlertFormat();
   await testServiceConflict();

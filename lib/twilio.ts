@@ -19,28 +19,49 @@ export async function sendSms(to: string, body: string): Promise<void> {
   console.log(`[Twilio] sent sid=${msg.sid}`);
 }
 
-// Builds a compact owner alert from the lead state.
-// Format: [RF] +90xxx HOT | saç bakımı | yarın 14:00 | Ayşe | eksik: konum
+// Builds an owner alert for laser/aesthetic lead state.
+// Returned as ownerAlertPreview in the API response (not sanitized).
+// When sent via notifyOwner → sendSms, newlines collapse to spaces and length is capped.
 export function buildOwnerAlert(
   customerFrom: string,
   state: ConversationState
 ): string {
   const score = (state.leadScore ?? state.urgency ?? "new").toUpperCase();
-  const parts: string[] = [];
 
-  parts.push(state.service ?? "yeni mesaj");
-  if (state.preferredDate) parts.push(state.preferredDate);
-  if (state.preferredTime) parts.push(state.preferredTime);
-  if (state.name) parts.push(state.name);
-  if (state.location) parts.push(state.location);
+  const lines: string[] = [];
+  lines.push(`[RF] ${customerFrom} | ${score}`);
 
-  const missing: string[] = [];
-  if (!state.preferredDate && !state.preferredTime) missing.push("tarih");
-  if (!state.location) missing.push("konum");
-  if (missing.length) parts.push(`eksik: ${missing.join("+")}`);
+  // Service / treatment area line
+  const serviceParts: string[] = [];
+  if (state.service) serviceParts.push(state.service);
+  if (state.treatmentArea) serviceParts.push(`Bolge: ${state.treatmentArea}`);
+  if (serviceParts.length) lines.push(serviceParts.join(" | "));
 
-  const alert = `[RF] ${customerFrom} ${score} | ${parts.join(" | ")}`;
-  return alert.length > SMS_MAX_CHARS ? alert.slice(0, SMS_MAX_CHARS) : alert;
+  // Contact line
+  const contactParts: string[] = [];
+  if (state.name) contactParts.push(`Isim: ${state.name}`);
+  if (state.phone) contactParts.push(`Tel: ${state.phone}`);
+  if (contactParts.length) lines.push(contactParts.join(" | "));
+
+  // Laser-specific signals
+  const laserParts: string[] = [];
+  if (state.firstTimeLaser !== undefined) {
+    laserParts.push(`Ilk kez: ${state.firstTimeLaser ? "Evet" : "Hayir"}`);
+  }
+  if (state.priceInquired) laserParts.push("Fiyat: Evet");
+  if (laserParts.length) lines.push(laserParts.join(" | "));
+
+  // Timing
+  const timeParts: string[] = [];
+  if (state.preferredDate) timeParts.push(state.preferredDate);
+  if (state.preferredTime) timeParts.push(state.preferredTime);
+  if (timeParts.length) lines.push(`Zaman: ${timeParts.join(" ")}`);
+
+  if (state.location) lines.push(`Konum: ${state.location}`);
+
+  if (score === "HOT") lines.push("Hizli donus yapilmali");
+
+  return lines.join("\n");
 }
 
 export async function notifyOwner(

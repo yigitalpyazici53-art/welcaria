@@ -1,10 +1,10 @@
 import { getRedis } from "./redis";
 
 export type Stage =
-  | "collect_name"
-  | "collect_service"
+  | "collect_treatment_area"
+  | "collect_first_time"
   | "collect_datetime"
-  | "collect_location"
+  | "collect_name"
   | "complete";
 
 export type UrgencyLevel = "low" | "medium" | "high";
@@ -14,6 +14,9 @@ export interface ConversationState {
   name?: string;
   phone?: string;
   service?: string;
+  treatmentArea?: string;
+  firstTimeLaser?: boolean;
+  priceInquired?: boolean;
   preferredDate?: string;
   preferredTime?: string;
   location?: string;
@@ -36,7 +39,7 @@ const STATE_TTL_MS = STATE_TTL_S * 1000;
 const memStore = new Map<string, ConversationState>();
 
 function freshState(): ConversationState {
-  return { stage: "collect_name", history: [], lastUpdated: Date.now() };
+  return { stage: "collect_treatment_area", history: [], lastUpdated: Date.now() };
 }
 
 // ── Explicit key / read / write helpers ───────────────────────────────────────
@@ -155,11 +158,9 @@ export async function addToHistory(
 }
 
 export function getNextStage(state: ConversationState): Stage {
-  if (!state.name) return "collect_name";
-  if (!state.service) return "collect_service";
+  if (!state.treatmentArea && !state.service) return "collect_treatment_area";
   if (!state.preferredDate && !state.preferredTime) return "collect_datetime";
-  // Single-location pilot (Ümraniye): location is auto-defaulted in inboundPipeline,
-  // so we skip collect_location and go directly to complete.
+  if (!state.name) return "collect_name";
   return "complete";
 }
 
