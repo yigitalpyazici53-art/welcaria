@@ -1,23 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStateStorageMode, deleteConversationState } from "@/lib/conversationState";
 
-// Temporary debug endpoint — remove once env is confirmed in production.
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  const key = req.nextUrl.searchParams.get("key");
-  if (key !== "rapidflow-inspect-2026") {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
-
-  const secret = process.env.TEST_WEBHOOK_SECRET ?? null;
-  return NextResponse.json({
-    hasTestWebhookSecret: secret !== null,
-    testWebhookSecretLength: secret !== null ? secret.length : null,
-    nodeEnv: process.env.NODE_ENV ?? null,
-    hasUpstashUrl: Boolean(process.env.UPSTASH_REDIS_REST_URL),
-    hasUpstashToken: Boolean(process.env.UPSTASH_REDIS_REST_TOKEN),
-  });
-}
-
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 1. Validate secret ───────────────────────────────────────────────────
   const configuredSecret = process.env.TEST_WEBHOOK_SECRET;
