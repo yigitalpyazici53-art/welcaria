@@ -116,9 +116,9 @@ export async function processInboundMessage(
       leadScore: recalcScore,
       stage: getNextStage(stateUpdated),
     });
-    // Single-location pilot: default location to "Ümraniye" when stage reaches complete
-    if (stateUpdated.stage === "complete" && !stateUpdated.location) {
-      stateUpdated = await updateState(from, { location: "Ümraniye" });
+    const defaultLocation = process.env.CLINIC_DEFAULT_LOCATION;
+    if (stateUpdated.stage === "complete" && !stateUpdated.location && defaultLocation) {
+      stateUpdated = await updateState(from, { location: defaultLocation });
     }
     await addToHistory(from, "user", input);
 
@@ -153,8 +153,7 @@ export async function processInboundMessage(
   const shouldLogToSheet = !!(
     (stateAfter.service || stateAfter.treatmentArea) &&
     stateAfter.name &&
-    (stateAfter.preferredDate || stateAfter.preferredTime) &&
-    stateAfter.location
+    (stateAfter.preferredDate || stateAfter.preferredTime)
   );
 
   return {

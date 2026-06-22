@@ -194,8 +194,9 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
     let updated = await updateState(from, extractedSlots as Partial<ConversationState>);
     const recalcScore = calculateLeadScoreFromState(updated);
     updated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(updated) });
-    if (updated.stage === "complete" && !updated.location) {
-      updated = await updateState(from, { location: "Ümraniye" });
+    const defaultLocation = process.env.CLINIC_DEFAULT_LOCATION;
+    if (updated.stage === "complete" && !updated.location && defaultLocation) {
+      updated = await updateState(from, { location: defaultLocation });
     }
     await addToHistory(from, "user", input);
 
