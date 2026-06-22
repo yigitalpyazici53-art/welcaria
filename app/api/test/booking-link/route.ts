@@ -43,12 +43,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Missing 'from'" }, { status: 400 });
   }
 
-  // ── 3. Seed state into Redis / memory ────────────────────────────────────
+  // ── 3. Merge request.state into existing Redis state ─────────────────────
+  // Read first so partial updates don't clobber fields already in Redis.
+  const existing = await getState(from);
+
+  // Preserve existing bookingLinkSent unless request.state explicitly sets it.
+  const bookingLinkSentOverride =
+    parsed.state && "bookingLinkSent" in parsed.state
+      ? parsed.state.bookingLinkSent
+      : existing.bookingLinkSent;
+
   const seedState = {
-    stage: "collect_treatment_area" as ConversationState["stage"],
-    history: [] as ConversationState["history"],
+    ...existing,
     lastUpdated: Date.now(),
     ...(parsed.state ?? {}),
+    bookingLinkSent: bookingLinkSentOverride,
   } as ConversationState;
 
   await _setStateForTest(from, seedState);
