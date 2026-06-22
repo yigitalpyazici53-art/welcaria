@@ -72,7 +72,7 @@ function CheckList({ items, white }: { items: string[]; white?: boolean }) {
 
 const pilotFeatures = [
   "AI message flow setup",
-  "Instagram/WhatsApp inquiry handling demo",
+  "WhatsApp inquiry handling demo",
   "Hot lead notification format",
   "Basic lead logging",
   "7-day pilot support",
@@ -420,7 +420,7 @@ export default function EnPage() {
                 letterSpacing: "-0.03em",
               }}
             >
-              Turn Instagram &amp; WhatsApp price inquiries into appointment
+              Turn WhatsApp price inquiries into appointment
               requests.
             </h1>
 
@@ -467,7 +467,7 @@ export default function EnPage() {
               {[
                 "Instant replies",
                 "Hot lead notification",
-                "Instagram & WhatsApp",
+                "WhatsApp",
               ].map((t) => (
                 <span
                   key={t}
@@ -794,8 +794,8 @@ export default function EnPage() {
             {[
               {
                 n: "01",
-                title: "Customer messages on Instagram or WhatsApp",
-                desc: "A price inquiry, appointment request, or general question arrives via Instagram DM or WhatsApp.",
+                title: "Customer messages on WhatsApp",
+                desc: "A price inquiry, appointment request, or general question arrives via WhatsApp.",
               },
               {
                 n: "02",
@@ -1655,8 +1655,7 @@ export default function EnPage() {
           customer assistant for laser hair removal and aesthetic clinics.
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-          Instagram &middot; WhatsApp &middot; Instant replies &middot; Hot lead
-          notifications
+          WhatsApp &middot; Instant replies &middot; Hot lead notifications
         </div>
       </footer>
 

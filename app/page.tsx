@@ -49,7 +49,7 @@ function CheckList({ items, white }: { items: string[]; white?: boolean }) {
 }
 
 const pilotFeatures = [
-  "WhatsApp/Instagram konuşma akışı",
+  "WhatsApp konuşma akışı",
   "Hizmet ve randevu bilgisi toplama",
   "Google Sheets kaydı",
   "Sıcak müşteri bildirimi",
@@ -563,7 +563,7 @@ export default function Home() {
               {
                 n: "01",
                 title: "Müşteri WhatsApp'tan yazar",
-                desc: "WhatsApp veya Instagram'dan fiyat sorusu, randevu talebi veya bilgi isteği gelir.",
+                desc: "WhatsApp'tan fiyat sorusu, randevu talebi veya bilgi isteği gelir.",
               },
               {
                 n: "02",
@@ -1031,7 +1031,7 @@ export default function Home() {
           <strong style={{ color: "#e2e8f0" }}>RandevuFlow</strong> - Lazer epilasyon ve estetik merkezleri için AI müşteri asistanı.
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-          WhatsApp - Instagram - Google Sheets - 7/24 otomatik yanıt
+          WhatsApp - Google Sheets - 7/24 otomatik yanıt
         </div>
       </footer>
 
