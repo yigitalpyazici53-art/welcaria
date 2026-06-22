@@ -447,7 +447,7 @@ function testLeadScores(): void {
 // ── 9. Prompt tests ───────────────────────────────────────────────────────
 
 async function testPrompt(): Promise<void> {
-  header("buildSystemPrompt: Turkish service business behavior");
+  header("buildSystemPrompt: international laser/aesthetic clinic behavior");
 
   const phone = "+905000000010";
   await resetState(phone);
@@ -456,11 +456,15 @@ async function testPrompt(): Promise<void> {
   const prompt = buildSystemPrompt(state);
   const lower = prompt.toLowerCase();
 
-  // Must describe Turkish business assistant behavior
-  if (lower.includes("asistan") || lower.includes("isletme") || lower.includes("randevu")) {
-    pass("prompt mentions Turkish business assistant behavior");
+  // Must describe an international clinic assistant
+  if (
+    lower.includes("assistant") ||
+    lower.includes("clinic") ||
+    lower.includes("appointment")
+  ) {
+    pass("prompt mentions international clinic assistant behavior");
   } else {
-    fail("prompt mentions Turkish business assistant", "neither asistan/isletme/randevu found");
+    fail("prompt mentions international clinic assistant", "neither assistant/clinic/appointment found");
   }
 
   // Must NOT mention US plumbing concepts
@@ -470,13 +474,15 @@ async function testPrompt(): Promise<void> {
   assertNotContains("prompt: no 'fixture'", prompt, "fixture");
   assertNotContains("prompt: no 'plumbing'", prompt, "plumbing");
 
-  // Must describe laser/aesthetic center persona
-  assertContains("prompt: mentions lazer epilasyon", prompt, "lazer epilasyon");
-  assertContains("prompt: mentions estetik", prompt, "estetik");
-  assertContains("prompt: fiyat uydurmama policy", prompt, "fiyat");
-  assertContains("prompt: no medical advice policy", prompt, "tıbbi");
+  // Must describe laser/aesthetic center persona (English)
+  assertContains("prompt: mentions laser hair removal", prompt, "laser hair removal");
+  assertContains("prompt: mentions aesthetic", prompt, "aesthetic");
+  assertContains("prompt: pricing policy", prompt, "pricing");
+  assertContains("prompt: no medical advice policy", prompt, "medical");
+  // Language rule must be present
+  assertContains("prompt: language mirror rule", prompt, "same language");
   // Stage instruction for initial stage should reference treatment area
-  assertContains("prompt: collect_treatment_area instruction mentions bölge", prompt, "bölge");
+  assertContains("prompt: collect_treatment_area instruction mentions treatment area", prompt, "treatment area");
 }
 
 // ── 10. Owner alert format tests ──────────────────────────────────────────

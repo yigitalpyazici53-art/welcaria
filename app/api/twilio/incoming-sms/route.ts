@@ -17,8 +17,8 @@ import type { ExtractedSlots } from "@/lib/slotExtractor";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
-const FALLBACK_CLAUDE = "Bir sistem hatası oluştu. Ekibimiz en kısa sürede sizinle iletişime geçecektir.";
-const FALLBACK_STATE  = "Bilgilerinizi aldık. Ekibimiz sizi arayarak randevuyu onaylayacaktır.";
+const FALLBACK_CLAUDE = "Sorry, something went wrong. Our clinic team will follow up shortly.";
+const FALLBACK_STATE  = "Thank you. We received your details. Our clinic team will follow up shortly.";
 
 const recentSids = new Set<string>();
 const MAX_SID_CACHE = 200;

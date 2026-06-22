@@ -13,11 +13,11 @@ import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
 
 const STAGE_FALLBACK: Record<string, string> = {
-  collect_treatment_area: "Merhaba! Hangi bolge icin lazer epilasyon dusunuyorsunuz?",
-  collect_first_time:     "Daha once lazer epilasyon yaptirdiniz mi?",
-  collect_datetime:       "Hangi gun ve saatte gelebilirsiniz?",
-  collect_name:           "Adinizi ve telefon numaranizi alabilir miyim?",
-  complete:               "Bilgilerinizi aldik. Merkezimiz sizi arayarak uygun zamani paylasacaktir.",
+  collect_treatment_area: "Hi! Which area are you interested in for laser hair removal?",
+  collect_first_time:     "Have you had laser hair removal before, or would this be your first time?",
+  collect_datetime:       "Which day and time would work best for you?",
+  collect_name:           "Could I please take your name and phone number?",
+  complete:               "Thank you. We received your appointment request. Our clinic team will follow up shortly.",
 };
 
 export interface InboundPipelineResult {

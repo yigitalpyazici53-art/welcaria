@@ -334,10 +334,10 @@ export function detectConflict(
   extracted: ExtractedSlots
 ): string | null {
   if (state.treatmentArea && extracted.treatmentArea && state.treatmentArea !== extracted.treatmentArea) {
-    return `Daha önce ${state.treatmentArea} bölgesinden bahsetmiştiniz. Hangi bölge için devam etmek istersiniz: ${extracted.treatmentArea} mi yoksa ${state.treatmentArea} mi?`;
+    return `You mentioned ${state.treatmentArea} earlier. Which area did you mean: ${extracted.treatmentArea} or ${state.treatmentArea}?`;
   }
   if (state.service && extracted.service && state.service !== extracted.service) {
-    return `Daha önce ${state.service} hakkında konuşmuştuk. ${extracted.service} mi yoksa ${state.service} için mi randevu almak istiyorsunuz?`;
+    return `We were discussing ${state.service} earlier. Did you mean ${extracted.service} instead?`;
   }
   return null;
 }
