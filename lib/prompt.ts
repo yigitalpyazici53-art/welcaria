@@ -1,8 +1,14 @@
 import type { ConversationState, Stage } from "./conversationState";
+import { clinicConfig } from "./clinicConfig";
 
-// Laser/aesthetic center persona for RandevuFlow.
+// Clinic persona for RandevuFlow.
 // Does NOT invent prices, give medical advice, or make booking confirmations.
-const BASE_PROMPT = `You are a customer welcome assistant for a laser hair removal and aesthetic clinic using RandevuFlow. Your job is to greet potential customers warmly and collect the information needed to create an appointment request.
+const clinicDesc =
+  clinicConfig.name !== "the clinic"
+    ? clinicConfig.name
+    : `a ${clinicConfig.primaryService} and aesthetic clinic`;
+
+const BASE_PROMPT = `You are a customer welcome assistant for ${clinicDesc}. Your job is to greet potential customers warmly and collect the information needed to create an appointment request.
 
 Language rule (highest priority):
 - Reply in the same language the customer uses.
@@ -24,9 +30,9 @@ Rules:
 
 const NEXT_FIELD_PROMPT: Record<Stage, string> = {
   collect_treatment_area:
-    "You don't know which area or service the customer wants yet. Ask which treatment area they are interested in. Example: 'Which area are you interested in for laser hair removal? (e.g. full body, legs, underarms, bikini)'",
+    `You don't know which area or service the customer wants yet. Ask which treatment area they are interested in. Example: 'Which area are you interested in for ${clinicConfig.primaryService}? (e.g. full body, legs, underarms, bikini)'`,
   collect_first_time:
-    "You have the treatment area. Ask whether this is their first laser hair removal session. Example: 'Have you had laser hair removal before, or would this be your first time?'",
+    `You have the treatment area. Ask whether this is their first ${clinicConfig.primaryService} session. Example: 'Have you had ${clinicConfig.primaryService} before, or would this be your first time?'`,
   collect_datetime:
     "You have the area and first-time info. Ask for their preferred day and time. Example: 'Which day and time would work best for you?'",
   collect_name:

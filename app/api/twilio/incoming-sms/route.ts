@@ -14,11 +14,17 @@ import type { ConversationState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
 import { extractSlots, detectConflict, calculateLeadScoreFromState } from "@/lib/slotExtractor";
 import type { ExtractedSlots } from "@/lib/slotExtractor";
+import { clinicConfig, formatBookingLinkMessage } from "@/lib/clinicConfig";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
-const FALLBACK_CLAUDE = "Sorry, something went wrong. Our clinic team will follow up shortly.";
-const FALLBACK_STATE  = "Thank you. We received your details. Our clinic team will follow up shortly.";
+const teamRef =
+  clinicConfig.name === "the clinic"
+    ? "Our clinic team"
+    : `The ${clinicConfig.name} team`;
+
+const FALLBACK_CLAUDE = `Sorry, something went wrong. ${teamRef} will follow up shortly.`;
+const FALLBACK_STATE  = `Thank you. We received your details. ${teamRef} will follow up shortly.`;
 
 const recentSids = new Set<string>();
 const MAX_SID_CACHE = 200;
@@ -262,10 +268,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 9. Booking link handoff ──────────────────────────────────────────────
-  const bookingUrl = process.env.CLINIC_BOOKING_URL;
-  if (bookingUrl && state.stage === "complete" && !state.bookingLinkSent) {
+  if (clinicConfig.bookingUrl && state.stage === "complete" && !state.bookingLinkSent) {
     try {
-      await sendSms(from, `Complete your appointment request here: ${bookingUrl}`);
+      await sendSms(from, formatBookingLinkMessage(clinicConfig.bookingUrl));
       await updateState(from, { bookingLinkSent: true });
       console.log("[Webhook] booking link sent");
     } catch (err) {

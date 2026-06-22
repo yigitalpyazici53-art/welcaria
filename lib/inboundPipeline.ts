@@ -11,13 +11,19 @@ import type { ExtractedSlots } from "./slotExtractor";
 import { classifyIntent } from "./classifyIntent";
 import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
+import { clinicConfig } from "./clinicConfig";
+
+const teamRef =
+  clinicConfig.name === "the clinic"
+    ? "Our clinic team"
+    : `The ${clinicConfig.name} team`;
 
 const STAGE_FALLBACK: Record<string, string> = {
-  collect_treatment_area: "Hi! Which area are you interested in for laser hair removal?",
-  collect_first_time:     "Have you had laser hair removal before, or would this be your first time?",
+  collect_treatment_area: `Hi! Which area are you interested in for ${clinicConfig.primaryService}?`,
+  collect_first_time:     `Have you had ${clinicConfig.primaryService} before, or would this be your first time?`,
   collect_datetime:       "Which day and time would work best for you?",
   collect_name:           "Could I please take your name and phone number?",
-  complete:               "Thank you. We received your appointment request. Our clinic team will follow up shortly.",
+  complete:               `Thank you. We received your appointment request. ${teamRef} will follow up shortly.`,
 };
 
 export interface InboundPipelineResult {
@@ -45,12 +51,12 @@ export interface InboundMessageOptions {
 function buildCompleteReply(state: ConversationState): string {
   const area = state.treatmentArea || state.service;
   if (state.name && area) {
-    return `Thank you, ${state.name}. We received your appointment request for ${area}. Our clinic team will follow up shortly.`;
+    return `Thank you, ${state.name}. We received your appointment request for ${area}. ${teamRef} will follow up shortly.`;
   }
   if (state.name) {
-    return `Thank you, ${state.name}. We received your appointment request. Our clinic team will follow up shortly.`;
+    return `Thank you, ${state.name}. We received your appointment request. ${teamRef} will follow up shortly.`;
   }
-  return "Thank you. We received your appointment request. Our clinic team will follow up shortly.";
+  return `Thank you. We received your appointment request. ${teamRef} will follow up shortly.`;
 }
 
 export async function processInboundMessage(
@@ -95,9 +101,9 @@ export async function processInboundMessage(
     }
   }
 
-  // When a treatment area is detected without an explicit service, normalize to "lazer epilasyon".
+  // When a treatment area is detected without an explicit service, normalize to the configured primary service.
   if (extractedSlots.treatmentArea && !extractedSlots.service && !stateBefore.service) {
-    extractedSlots.service = "lazer epilasyon";
+    extractedSlots.service = clinicConfig.primaryService;
   }
 
   const conflictQuestion = detectConflict(stateBefore, extractedSlots);
@@ -116,7 +122,7 @@ export async function processInboundMessage(
       leadScore: recalcScore,
       stage: getNextStage(stateUpdated),
     });
-    const defaultLocation = process.env.CLINIC_DEFAULT_LOCATION;
+    const defaultLocation = clinicConfig.defaultLocation;
     if (stateUpdated.stage === "complete" && !stateUpdated.location && defaultLocation) {
       stateUpdated = await updateState(from, { location: defaultLocation });
     }

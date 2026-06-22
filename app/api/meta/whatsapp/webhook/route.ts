@@ -4,6 +4,7 @@ import { sendWhatsAppText } from "@/lib/metaWhatsApp";
 import { notifyOwner } from "@/lib/twilio";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
+import { clinicConfig, formatBookingLinkMessage } from "@/lib/clinicConfig";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -157,10 +158,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── Booking link handoff ────────────────────────────────────────────────────
-  const bookingUrl = process.env.CLINIC_BOOKING_URL;
-  if (bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
+  if (clinicConfig.bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
     try {
-      await sendWhatsAppText(from, `You can complete your appointment request here: ${bookingUrl}`);
+      await sendWhatsAppText(from, formatBookingLinkMessage(clinicConfig.bookingUrl));
       await updateState(from, { bookingLinkSent: true });
       console.log("[WhatsApp Webhook] booking link sent");
     } catch (err) {

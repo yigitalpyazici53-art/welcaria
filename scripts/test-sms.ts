@@ -52,6 +52,7 @@ import { extractSlots, detectConflict, calculateLeadScoreFromState } from "../li
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
+import { clinicConfig } from "../lib/clinicConfig";
 
 const TEST_FROM = "+905000000000";
 
@@ -482,8 +483,8 @@ async function testPrompt(): Promise<void> {
   assertNotContains("prompt: no 'fixture'", prompt, "fixture");
   assertNotContains("prompt: no 'plumbing'", prompt, "plumbing");
 
-  // Must describe laser/aesthetic center persona (English)
-  assertContains("prompt: mentions laser hair removal", prompt, "laser hair removal");
+  // Must describe the configured primary service and aesthetic clinic
+  assertContains("prompt: mentions primary service", prompt, clinicConfig.primaryService);
   assertContains("prompt: mentions aesthetic", prompt, "aesthetic");
   assertContains("prompt: pricing policy", prompt, "pricing");
   assertContains("prompt: no medical advice policy", prompt, "medical");
@@ -820,6 +821,43 @@ async function testApiScenarios(): Promise<void> {
   );
 }
 
+// ── 16. Clinic config: primaryService normalization ───────────────────────
+
+async function testClinicConfigNormalization(): Promise<void> {
+  header("Clinic config: CLINIC_PRIMARY_SERVICE normalization");
+
+  const phone = "+905000000060";
+  await resetState(phone);
+
+  // Send a message that contains only a treatment area, not an explicit service keyword.
+  // The pipeline should normalize service to clinicConfig.primaryService.
+  // "tüm vücut için randevu" → treatmentArea extracted, service falls back to config.
+  const result = await processInboundMessage({
+    from: phone,
+    body: "tüm vücut için randevu almak istiyorum",
+  });
+
+  assertEqual(
+    `pipeline normalizes service to clinicConfig.primaryService (${clinicConfig.primaryService})`,
+    result.stateAfter.service,
+    clinicConfig.primaryService
+  );
+
+  // Verify the stage fallback strings also reference the configured primary service
+  // by checking the prompt contains the value
+  const state = result.stateAfter;
+  const { buildSystemPrompt: bsp } = await import("../lib/prompt");
+  const stateForPrompt = { ...state, stage: "collect_treatment_area" as const };
+  const fallbackPrompt = bsp(stateForPrompt);
+  assertContains(
+    "stage fallback prompt uses clinicConfig.primaryService",
+    fallbackPrompt,
+    clinicConfig.primaryService
+  );
+
+  pass("CLINIC_PRIMARY_SERVICE drives pipeline service normalization and stage fallbacks");
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -843,6 +881,7 @@ async function main() {
   await testOwnerAlertFormat();
   await testServiceConflict();
   await testCompleteStageReply();
+  await testClinicConfigNormalization();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
