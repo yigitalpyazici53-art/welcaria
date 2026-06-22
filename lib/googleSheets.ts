@@ -32,7 +32,13 @@ export interface LogEntry {
   status: string;
 }
 
-export async function logToSheet(entry: LogEntry): Promise<void> {
+export interface LogToSheetResult {
+  skipped: boolean;
+  missingVars?: string[];
+  error?: string;
+}
+
+export async function logToSheet(entry: LogEntry): Promise<LogToSheetResult> {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = process.env.GOOGLE_PRIVATE_KEY;
@@ -42,11 +48,9 @@ export async function logToSheet(entry: LogEntry): Promise<void> {
       !sheetId && "GOOGLE_SHEET_ID",
       !email && "GOOGLE_SERVICE_ACCOUNT_EMAIL",
       !key && "GOOGLE_PRIVATE_KEY",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    console.warn(`[GoogleSheets] missing env vars; skipping sheet log (missing: ${missing})`);
-    return;
+    ].filter(Boolean) as string[];
+    console.warn(`[GoogleSheets] missing env vars; skipping sheet log (missing: ${missing.join(", ")})`);
+    return { skipped: true, missingVars: missing };
   }
 
   try {
@@ -78,8 +82,10 @@ export async function logToSheet(entry: LogEntry): Promise<void> {
     });
 
     console.log("[Sheets] Logged lead for", entry.phone);
+    return { skipped: false };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[Sheets] Failed to log (non-fatal): ${msg}`);
+    return { skipped: false, error: msg };
   }
 }
