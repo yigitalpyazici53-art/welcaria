@@ -89,3 +89,56 @@ export async function logToSheet(entry: LogEntry): Promise<LogToSheetResult> {
     return { skipped: false, error: msg };
   }
 }
+
+export async function readLeadsForDateRange(from: Date, to: Date): Promise<LogEntry[]> {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const key = process.env.GOOGLE_PRIVATE_KEY;
+
+  if (!sheetId || !email || !key) {
+    console.warn("[Sheets] readLeadsForDateRange: missing env vars, returning []");
+    return [];
+  }
+
+  try {
+    const auth = getAuth();
+    const sheets = google.sheets({ version: "v4", auth });
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: "Sheet1!A:N",
+    });
+
+    const rows = res.data.values ?? [];
+    const fromMs = from.getTime();
+    const toMs = to.getTime();
+
+    return rows
+      .filter((row) => {
+        const ts = Date.parse(row[0]);
+        return !isNaN(ts) && ts >= fromMs && ts <= toMs;
+      })
+      .map(
+        (row): LogEntry => ({
+          createdAt:           row[0]  ?? "",
+          source:              row[1]  ?? "",
+          name:                row[2]  ?? "",
+          phone:               row[3]  ?? "",
+          service:             row[4]  ?? "",
+          preferredDate:       row[5]  ?? "",
+          preferredTime:       row[6]  ?? "",
+          location:            row[7]  ?? "",
+          urgency:             row[8]  ?? "",
+          leadScore:           row[9]  ?? "",
+          intent:              row[10] ?? "",
+          notes:               row[11] ?? "",
+          conversationSummary: row[12] ?? "",
+          status:              row[13] ?? "",
+        })
+      );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[Sheets] readLeadsForDateRange failed: ${msg}`);
+    return [];
+  }
+}

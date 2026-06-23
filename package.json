@@ -11,7 +11,8 @@
     "test-sms": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-sms.ts",
     "test-inbound": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-inbound-endpoint.ts",
     "test-whatsapp": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-whatsapp-webhook.ts",
-    "test-reset": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-reset-endpoint.ts"
+    "test-reset": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-reset-endpoint.ts",
+    "test-daily-summary": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-daily-summary.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.55.0",
@@ -20,6 +21,7 @@
     "next": "^16.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "resend": "^6.14.0",
     "twilio": "^5.4.0"
   },
   "devDependencies": {

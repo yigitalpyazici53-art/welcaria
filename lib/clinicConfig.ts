@@ -6,6 +6,7 @@ export const clinicConfig = {
   bookingLinkMessage:
     process.env.CLINIC_BOOKING_LINK_MESSAGE ??
     "You can complete your appointment request here: {url}",
+  ownerEmail:     process.env.OWNER_EMAIL             ?? "",
 };
 
 export function formatBookingLinkMessage(url: string): string {
