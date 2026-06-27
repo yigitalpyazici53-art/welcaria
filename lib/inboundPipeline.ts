@@ -122,7 +122,6 @@ export async function processInboundMessage(
     if (stateUpdated.stage === "complete" && !stateUpdated.location && defaultLocation) {
       stateUpdated = await updateState(from, { location: defaultLocation });
     }
-    await addToHistory(from, "user", input);
 
     if (stateUpdated.stage === "complete") {
       assistantReply = sanitizeSmsText(buildCompleteReply(stateUpdated));
@@ -142,6 +141,7 @@ export async function processInboundMessage(
     }
   }
 
+  await addToHistory(from, "user", input);
   await addToHistory(from, "assistant", assistantReply);
 
   const stateAfter = await getState(from);

@@ -37,7 +37,7 @@ if (fs.existsSync(envFile)) {
 }
 
 // ── Safe to import lib modules now ────────────────────────────────────────────
-import { resetStateForTest, getStateStorageMode, getState, updateState } from "../lib/conversationState";
+import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest } from "../lib/conversationState";
 import { processInboundMessage } from "../lib/inboundPipeline";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -354,6 +354,43 @@ async function main() {
     tFollowUp.stateAfter.sheetLoggedComplete,
     true
   );
+
+  // ── Section 6: Conflict-turn history logging (regression for orphaned assistant message) ──
+  // Before the fix, the user message was not added to history on conflict turns,
+  // creating an orphaned assistant entry with no preceding user turn.
+  console.log("\n── 6. Conflict-turn history: user + assistant both logged ──");
+
+  const PHONE_CF = "905551112403";
+  await resetStateForTest(PHONE_CF);
+  await _setStateForTest(PHONE_CF, {
+    stage: "collect_datetime",
+    service: "lazer epilasyon",
+    treatmentArea: "bacak",
+    history: [],
+    lastUpdated: Date.now(),
+  });
+
+  const cfResult = await processInboundMessage({
+    from: PHONE_CF,
+    body: "Tüm vücut için randevu almak istiyorum",
+    source: "whatsapp",
+  });
+
+  const cfState = await getState(PHONE_CF);
+  const cfHist = cfState.history;
+
+  console.log(`  conflict reply: "${cfResult.assistantReply.slice(0, 80)}"`);
+  console.log(`  history length: ${cfHist.length}`);
+
+  if (cfHist.length < 2) {
+    fail("CF1: conflict turn history has at least 2 entries", `length=${cfHist.length}`);
+  } else {
+    const last2 = cfHist.slice(-2);
+    assertEqual("CF1: second-to-last role = user", last2[0].role, "user");
+    assertEqual("CF2: last role = assistant", last2[1].role, "assistant");
+    assertEqual("CF3: user content matches input", last2[0].content, cfResult.input);
+    assertEqual("CF4: assistant content matches reply", last2[1].content, cfResult.assistantReply);
+  }
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
