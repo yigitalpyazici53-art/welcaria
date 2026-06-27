@@ -48,7 +48,7 @@ import {
   _setStateForTest,
   type ConversationState,
 } from "../lib/conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea } from "../lib/slotExtractor";
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
@@ -698,9 +698,10 @@ function testDemoScenarios(): void {
   header("Demo scenario tests: laser/aesthetic lead extraction");
 
   // A) Price inquiry for full body laser epilasyon
+  // "tüm vücut" normalizes to canonical "full body" at extraction time
   const a = extractSlots("Merhaba, tüm vücut lazer epilasyon fiyatı ne kadar?");
   assertContains("A: service lazer epilasyon", a.service ?? "", "lazer epilasyon");
-  assertContains("A: treatmentArea tüm vücut", a.treatmentArea ?? "", "tüm vücut");
+  assertEqual("A: treatmentArea full body (tüm vücut normalized)", a.treatmentArea, "full body");
   if (a.priceInquired) {
     pass("A: priceInquired=true");
   } else {
@@ -954,7 +955,113 @@ async function testLegacyStateMigration(): Promise<void> {
   pass("All legacy collect_first_time migration cases handled safely");
 }
 
-// ── 15. End-to-end Claude API scenarios ───────────────────────────────────
+// ── 15. Treatment area canonical normalization ────────────────────────────
+
+function testTreatmentAreaNormalization(): void {
+  header("Treatment area canonical normalization (full body equivalents)");
+
+  // 1. normalizeTreatmentArea maps all required variants to "full body"
+  const fullBodyVariants: string[] = [
+    "full body", "full-body", "entire body", "whole body",
+    "tüm vücut", "tüm-vücut", "tum vucut", "tam vücut",
+  ];
+  for (const v of fullBodyVariants) {
+    assertEqual(`normalizeTreatmentArea("${v}") → "full body"`, normalizeTreatmentArea(v), "full body");
+  }
+
+  // 2. Non-full-body areas are not altered
+  for (const untouched of ["bacak", "koltuk altı", "bikini", "legs", "yüz"]) {
+    assertEqual(`normalizeTreatmentArea("${untouched}") → unchanged`, normalizeTreatmentArea(untouched), untouched);
+  }
+
+  // 3. extractSlots: "tüm vücut" in a message → "full body"
+  const s1 = extractSlots("Tüm vücut için randevu almak istiyorum.");
+  assertEqual('extractSlots("tüm vücut") → "full body"', s1.treatmentArea, "full body");
+
+  // 4. extractSlots: "tum vucut" (unaccented) → "full body"
+  const s2 = extractSlots("Tum vucut lazer epilasyon almak istiyorum.");
+  assertEqual('extractSlots("tum vucut") → "full body"', s2.treatmentArea, "full body");
+
+  // 5. extractSlots: "tüm-vücut" (dashed) → "full body"
+  const s3 = extractSlots("tüm-vücut bölgesi");
+  assertEqual('extractSlots("tüm-vücut") → "full body"', s3.treatmentArea, "full body");
+
+  // 6. extractSlots: "tam vücut" → "full body"
+  const s4 = extractSlots("tam vücut lazer randevusu");
+  assertEqual('extractSlots("tam vücut") → "full body"', s4.treatmentArea, "full body");
+
+  // 7. extractSlots: "entire body" → "full body"
+  const s5 = extractSlots("I want entire body laser.");
+  assertEqual('extractSlots("entire body") → "full body"', s5.treatmentArea, "full body");
+
+  // 8. extractSlots: "whole body" → "full body"
+  const s6 = extractSlots("Whole body laser hair removal.");
+  assertEqual('extractSlots("whole body") → "full body"', s6.treatmentArea, "full body");
+
+  // 9. No false conflict: state has "full body", extracted is "tüm vücut" variant
+  //    (happens when customer said "full body" first, then says "tüm vücut")
+  const stateWithFullBody: ConversationState = {
+    stage: "collect_datetime",
+    treatmentArea: "full body",
+    history: [],
+    lastUpdated: Date.now(),
+  };
+  const extracted9 = extractSlots("Tüm vücut için uygun bir zaman var mı?");
+  const conflict9 = detectConflict(stateWithFullBody, extracted9);
+  if (conflict9 === null) {
+    pass('no false conflict: state="full body", extracted msg has "tüm vücut"');
+  } else {
+    fail('no false conflict: state="full body", extracted msg has "tüm vücut"', `got: "${conflict9}"`);
+  }
+
+  // 10. No false conflict reversed: legacy state has "tüm vücut", extracted is "full body"
+  //     (handles old Redis values stored before this normalization was added)
+  const stateWithTumVucut: ConversationState = {
+    stage: "collect_datetime",
+    treatmentArea: "tüm vücut",
+    history: [],
+    lastUpdated: Date.now(),
+  };
+  const extracted10 = extractSlots("Full body laser, please.");
+  const conflict10 = detectConflict(stateWithTumVucut, extracted10);
+  if (conflict10 === null) {
+    pass('no false conflict: state="tüm vücut" (legacy), extracted="full body"');
+  } else {
+    fail('no false conflict: state="tüm vücut" (legacy), extracted="full body"', `got: "${conflict10}"`);
+  }
+
+  // 11. Real conflict still triggers: state has "bacak", new message is "full body"
+  const stateWithBacak: ConversationState = {
+    stage: "collect_datetime",
+    treatmentArea: "bacak",
+    history: [],
+    lastUpdated: Date.now(),
+  };
+  const extracted11 = extractSlots("Full body laser, how much?");
+  const conflict11 = detectConflict(stateWithBacak, extracted11);
+  if (conflict11 !== null) {
+    pass('real conflict: state="bacak", extracted="full body" → conflict triggered', conflict11.slice(0, 60));
+  } else {
+    fail('real conflict: state="bacak", extracted="full body"', 'expected a conflict but got null');
+  }
+
+  // 12. Real conflict reversed: state has "full body", new message is "bacak"
+  const stateWithFB2: ConversationState = {
+    stage: "collect_datetime",
+    treatmentArea: "full body",
+    history: [],
+    lastUpdated: Date.now(),
+  };
+  const extracted12 = extractSlots("Bacak bölgesi randevusu almak istiyorum.");
+  const conflict12 = detectConflict(stateWithFB2, extracted12);
+  if (conflict12 !== null) {
+    pass('real conflict: state="full body", extracted="bacak" → conflict triggered', conflict12.slice(0, 60));
+  } else {
+    fail('real conflict: state="full body", extracted="bacak"', 'expected a conflict but got null');
+  }
+}
+
+// ── 16. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
   phone: string,
@@ -1093,6 +1200,7 @@ async function main() {
   await testClinicConfigNormalization();
   await testHistoryLogging();
   await testLegacyStateMigration();
+  testTreatmentAreaNormalization();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
