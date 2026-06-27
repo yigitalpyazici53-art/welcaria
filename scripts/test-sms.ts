@@ -37,7 +37,7 @@ if (fs.existsSync(envFile)) {
 
 // ── Now safe to import lib modules (client is lazy-initialized) ──────────
 import { generateSmsReply } from "../lib/anthropic";
-import { buildOwnerAlert } from "../lib/twilio";
+import { buildOwnerAlert, notifyOwner } from "../lib/twilio";
 import { sanitizeSmsText, SMS_MAX_CHARS } from "../lib/sanitize";
 import {
   getState,
@@ -542,6 +542,41 @@ async function testOwnerAlertFormat(): Promise<void> {
   assertContains("hot alert has ACTION line", alert2, "ACTION: Follow up ASAP");
 }
 
+// ── 10b. notifyOwner: missing OWNER_PHONE fails clearly ───────────────────
+
+async function testOwnerPhoneValidation(): Promise<void> {
+  header("notifyOwner: missing OWNER_PHONE fails clearly");
+
+  const savedOwnerPhone = process.env.OWNER_PHONE;
+  delete process.env.OWNER_PHONE;
+
+  const phone = "+905000000021";
+  await resetState(phone);
+  const state = await getState(phone);
+
+  let threw = false;
+  try {
+    await notifyOwner(phone, state);
+    fail("notifyOwner with missing OWNER_PHONE", "expected an error to be thrown, but none was");
+  } catch (err) {
+    threw = true;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("Missing OWNER_PHONE")) {
+      pass("notifyOwner throws with clear OWNER_PHONE message", msg);
+    } else {
+      fail("notifyOwner throws with clear OWNER_PHONE message", `got: "${msg}"`);
+    }
+  } finally {
+    if (savedOwnerPhone !== undefined) {
+      process.env.OWNER_PHONE = savedOwnerPhone;
+    }
+  }
+
+  if (!threw) {
+    fail("notifyOwner must throw when OWNER_PHONE missing", "no error was thrown");
+  }
+}
+
 // ── 11. Service conflict detection ────────────────────────────────────────
 
 async function testServiceConflict(): Promise<void> {
@@ -879,6 +914,7 @@ async function main() {
   testDemoScenarios();
   await testPrompt();
   await testOwnerAlertFormat();
+  await testOwnerPhoneValidation();
   await testServiceConflict();
   await testCompleteStageReply();
   await testClinicConfigNormalization();

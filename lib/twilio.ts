@@ -1,20 +1,24 @@
 import twilio from "twilio";
-import { sanitizeSmsText, SMS_MAX_CHARS } from "./sanitize";
+import { sanitizeSmsText } from "./sanitize";
 import type { ConversationState } from "./conversationState";
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID!;
-const authToken = process.env.TWILIO_AUTH_TOKEN!;
-const fromNumber = process.env.TWILIO_PHONE_NUMBER!;
-const ownerPhone = process.env.OWNER_PHONE!;
+function validateTwilioConfig(): { accountSid: string; authToken: string; fromNumber: string } {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
-function getClient() {
-  return twilio(accountSid, authToken);
+  if (!accountSid) throw new Error("Missing TWILIO_ACCOUNT_SID");
+  if (!authToken) throw new Error("Missing TWILIO_AUTH_TOKEN");
+  if (!fromNumber) throw new Error("Missing TWILIO_PHONE_NUMBER");
+
+  return { accountSid, authToken, fromNumber };
 }
 
 export async function sendSms(to: string, body: string): Promise<void> {
+  const { accountSid, authToken, fromNumber } = validateTwilioConfig();
   const clean = sanitizeSmsText(body);
   console.log(`[Twilio] sending to=${to} len=${clean.length}`);
-  const client = getClient();
+  const client = twilio(accountSid, authToken);
   const msg = await client.messages.create({ from: fromNumber, to, body: clean });
   console.log(`[Twilio] sent sid=${msg.sid}`);
 }
@@ -74,9 +78,16 @@ export async function notifyOwner(
   customerFrom: string,
   state: ConversationState
 ): Promise<void> {
+  const ownerPhone = process.env.OWNER_PHONE;
+  if (!ownerPhone) {
+    const msg = "Missing OWNER_PHONE for owner notification";
+    console.error(`[OwnerAlert ERROR] ${msg}`);
+    throw new Error(msg);
+  }
+
   console.log(`[OwnerAlert] to=${ownerPhone} customer=${customerFrom}`);
 
-  if (ownerPhone && ownerPhone === customerFrom) {
+  if (ownerPhone === customerFrom) {
     console.warn(
       "[OwnerAlert WARNING] owner phone equals customer phone in test mode — alert will reach customer"
     );
