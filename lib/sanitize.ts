@@ -53,6 +53,16 @@ export function sanitizeReplyText(text: string): string {
   return sanitizeBase(text);
 }
 
+// Ensures "Welcome to {clinicName}" is followed by a period before the next sentence.
+// Fixes AI-generated replies that omit sentence-terminal punctuation after the clinic name.
+// Only acts when the clinic name is immediately followed by a space and a letter (no existing punctuation).
+export function ensureClinicNamePunctuation(text: string, clinicName: string): string {
+  if (!clinicName || clinicName === "the clinic") return text;
+  const escaped = clinicName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(Welcome to ${escaped}) ([A-Za-zÇçĞğİıÖöŞşÜü])`, "g");
+  return text.replace(re, "$1. $2");
+}
+
 export function sanitizeSmsText(text: string): string {
   const s = sanitizeBase(text);
   return s.length > SMS_MAX_CHARS ? s.slice(0, SMS_MAX_CHARS) : s;

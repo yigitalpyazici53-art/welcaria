@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "./prompt";
-import { sanitizeReplyText } from "./sanitize";
+import { sanitizeReplyText, ensureClinicNamePunctuation } from "./sanitize";
+import { clinicConfig } from "./clinicConfig";
 import type { ConversationState } from "./conversationState";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -59,7 +60,8 @@ export async function generateSmsReply(
 
   // Filter non-SMS characters but do NOT truncate — length is enforced only in
   // sendSms() so that test/WhatsApp endpoints receive the full reply.
-  const clean = sanitizeReplyText(raw);
+  // Also ensures "Welcome to {clinicName}" is properly punctuated before the next sentence.
+  const clean = ensureClinicNamePunctuation(sanitizeReplyText(raw), clinicConfig.name);
 
   console.log("[Reply] generated (Claude):", clean.slice(0, 80) + (clean.length > 80 ? "..." : ""));
   return clean;

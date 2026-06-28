@@ -38,7 +38,7 @@ if (fs.existsSync(envFile)) {
 // ── Now safe to import lib modules (client is lazy-initialized) ──────────
 import { generateSmsReply, getAnthropicModel, DEFAULT_MODEL } from "../lib/anthropic";
 import { buildOwnerAlert, notifyOwner } from "../lib/twilio";
-import { sanitizeSmsText, SMS_MAX_CHARS } from "../lib/sanitize";
+import { sanitizeSmsText, SMS_MAX_CHARS, ensureClinicNamePunctuation } from "../lib/sanitize";
 import {
   getState,
   updateState,
@@ -1241,6 +1241,39 @@ async function testClinicConfigNormalization(): Promise<void> {
   pass("CLINIC_PRIMARY_SERVICE drives pipeline service normalization and stage fallbacks");
 }
 
+// ── Welcome punctuation regression tests ─────────────────────────────────
+
+function testWelcomePunctuation(): void {
+  header("Welcome punctuation: clinic name must be followed by a period");
+
+  const name = clinicConfig.name !== "the clinic" ? clinicConfig.name : "Aurea Aesthetic Clinic";
+
+  // Case 1: missing period — normalizer must insert one
+  const c1 = ensureClinicNamePunctuation(`Hi there! Welcome to ${name} Pricing depends on treatment.`, name);
+  assertNotContains(`c1: no bare "Welcome to ${name} Pricing"`, c1, `Welcome to ${name} Pricing`);
+  assertContains(`c1: period inserted after clinic name`, c1, `Welcome to ${name}.`);
+
+  // Case 2: already has a period — must be unchanged
+  const c2 = ensureClinicNamePunctuation(`Welcome to ${name}. Pricing depends.`, name);
+  assertContains(`c2: existing period preserved`, c2, `Welcome to ${name}.`);
+  assertNotContains(`c2: no double period`, c2, `${name}..`);
+
+  // Case 3: already has exclamation mark — must be unchanged
+  const c3 = ensureClinicNamePunctuation(`Welcome to ${name}! How can we help?`, name);
+  assertContains(`c3: exclamation mark preserved`, c3, `Welcome to ${name}!`);
+
+  // Case 4: clinicConfig.name is used (not hardcoded)
+  const dynamic = clinicConfig.name !== "the clinic" ? clinicConfig.name : "Test Clinic";
+  const c4 = ensureClinicNamePunctuation(`Welcome to ${dynamic} We are here to help.`, dynamic);
+  assertNotContains(`c4: config-driven clinic name gets period`, c4, `${dynamic} We`);
+  assertContains(`c4: period inserted dynamically`, c4, `${dynamic}. We`);
+
+  // Case 5: fallback reply (no "Welcome to") must pass through unchanged
+  const fallbackReply = `Hi! Which area are you interested in for ${clinicConfig.primaryService}?`;
+  const c5 = ensureClinicNamePunctuation(fallbackReply, name);
+  assertEqual(`c5: fallback reply without "Welcome to" is unchanged`, c5, fallbackReply);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1269,6 +1302,7 @@ async function main() {
   await testHistoryLogging();
   await testLegacyStateMigration();
   testTreatmentAreaNormalization();
+  testWelcomePunctuation();
   await testAnthropicModelConfig();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
