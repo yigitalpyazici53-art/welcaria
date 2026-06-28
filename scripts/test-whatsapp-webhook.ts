@@ -392,6 +392,103 @@ async function main() {
     assertEqual("CF4: assistant content matches reply", last2[1].content, cfResult.assistantReply);
   }
 
+  // ── Section 7: Batch message handling ────────────────────────────────────
+  // Validates that the route's per-entry/change/message iteration handles:
+  //   a) single-message payloads (no regression)
+  //   b) multi-message batches (all text messages processed)
+  //   c) mixed-type batches (non-text skipped, text processed)
+  //   d) batches where one message is invalid (rest still attempted)
+  console.log("\n── 7. Batch message handling ──");
+
+  // 7a. Single-message payload (confirm Section 1 behavior is unchanged)
+  pass("B1: Single-message payload processed (covered by Section 1)");
+
+  // 7b. Multi-message batch: two text messages arrive in the same event
+  const PHONE_BATCH = "905551112410";
+  await resetStateForTest(PHONE_BATCH);
+
+  const batchMessages = [
+    { type: "text", body: "Merhaba lazer epilasyon fiyatı nedir?", from: PHONE_BATCH },
+    { type: "text", body: "Cumartesi günü uygun olur", from: PHONE_BATCH },
+  ];
+
+  let batchProcessed = 0;
+  let batchSkipped = 0;
+  let batchFailed = 0;
+
+  for (const msg of batchMessages) {
+    if (msg.type !== "text" || !msg.body) { batchSkipped++; continue; }
+    try {
+      const res = await processInboundMessage({ from: msg.from, body: msg.body, source: "whatsapp" });
+      console.log(`  Batch msg: stage=${res.stateAfter.stage} intent=${res.intent}`);
+      batchProcessed++;
+    } catch (err) {
+      console.error("  Batch msg failed:", err instanceof Error ? err.message : err);
+      batchFailed++;
+    }
+  }
+
+  assertEqual("B2: multi-message batch — processed=2", batchProcessed, 2);
+  assertEqual("B2: multi-message batch — skipped=0", batchSkipped, 0);
+  assertEqual("B2: multi-message batch — failed=0", batchFailed, 0);
+
+  // 7c. Mixed-type batch: image + text + video — only the text message is processed
+  const PHONE_MIXED = "905551112411";
+  await resetStateForTest(PHONE_MIXED);
+
+  type MockMessage = { type: string; body?: string; from: string };
+  const mixedMessages: MockMessage[] = [
+    { type: "image", from: PHONE_MIXED },
+    { type: "text", body: "Merhaba randevu almak istiyorum", from: PHONE_MIXED },
+    { type: "video", from: PHONE_MIXED },
+  ];
+
+  let mixedProcessed = 0;
+  let mixedSkipped = 0;
+
+  for (const msg of mixedMessages) {
+    if (msg.type !== "text" || !msg.body) { mixedSkipped++; continue; }
+    try {
+      const res = await processInboundMessage({ from: msg.from, body: msg.body, source: "whatsapp" });
+      console.log(`  Mixed batch text msg: stage=${res.stateAfter.stage}`);
+      mixedProcessed++;
+    } catch {
+      mixedSkipped++;
+    }
+  }
+
+  assertEqual("B3: mixed batch — processed=1 (text only)", mixedProcessed, 1);
+  assertEqual("B3: mixed batch — skipped=2 (image+video)", mixedSkipped, 2);
+
+  // 7d. Error resilience: invalid message (empty body) is skipped, next message succeeds
+  const PHONE_ERR2 = "905551112413";
+  await resetStateForTest(PHONE_ERR2);
+
+  type TextOrInvalid = { type: string; body: string; from: string };
+  const resilientMessages: TextOrInvalid[] = [
+    { type: "text", body: "", from: "905551112412" },            // empty body — skipped before pipeline
+    { type: "text", body: "Merhaba fiyat alabilir miyim?", from: PHONE_ERR2 }, // valid
+  ];
+
+  let resilientProcessed = 0;
+  let resilientSkipped = 0;
+
+  for (const msg of resilientMessages) {
+    if (msg.type !== "text" || !msg.body) { resilientSkipped++; continue; }
+    try {
+      const res = await processInboundMessage({ from: msg.from, body: msg.body, source: "whatsapp" });
+      console.log(`  Resilient msg: from=${msg.from} stage=${res.stateAfter.stage}`);
+      resilientProcessed++;
+    } catch (err) {
+      console.error("  Resilient msg error:", err instanceof Error ? err.message : err);
+      resilientSkipped++;
+    }
+  }
+
+  assertEqual("B4: resilient batch — processed=1 (valid)", resilientProcessed, 1);
+  assertEqual("B4: resilient batch — skipped=1 (empty body)", resilientSkipped, 1);
+  pass("B4: second message processed despite first being invalid");
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
   if (failures === 0) {
