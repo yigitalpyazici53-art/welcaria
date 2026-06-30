@@ -47,6 +47,8 @@ import {
   updateState,
   getStateStorageMode,
   getConversationKey,
+  normalizePhone,
+  _setStateForTest,
 } from "../lib/conversationState";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -145,6 +147,23 @@ async function main() {
     keysFromBare[1]
   );
 
+  // normalizePhone strips Twilio WhatsApp prefix
+  assertEqual(
+    "normalizePhone strips whatsapp: prefix",
+    normalizePhone("whatsapp:+15556610104"),
+    "+15556610104"
+  );
+  assertEqual(
+    "normalizePhone is a no-op for plain number",
+    normalizePhone("+905419473049"),
+    "+905419473049"
+  );
+  assertEqual(
+    "normalizePhone is case-insensitive",
+    normalizePhone("WhatsApp:+15556610104"),
+    "+15556610104"
+  );
+
   // ── Section 3: Reset bare phone number ───────────────────────────────────
   console.log("\n── 3. Reset — bare phone (no '+') ──");
 
@@ -158,9 +177,11 @@ async function main() {
   const deletedKeys = await deleteConversationState(PHONE_TEST);
   console.log(`  deletedKeys: ${JSON.stringify(deletedKeys)}`);
 
-  assertLength("deletedKeys length = 2", deletedKeys, 2);
+  assertLength("deletedKeys length = 4", deletedKeys, 4);
   assertEqual("deletedKeys[0] = conv:905551119900", deletedKeys[0], "conv:905551119900");
   assertEqual("deletedKeys[1] = conv:+905551119900", deletedKeys[1], "conv:+905551119900");
+  assertEqual("deletedKeys[2] = conv:whatsapp:905551119900", deletedKeys[2], "conv:whatsapp:905551119900");
+  assertEqual("deletedKeys[3] = conv:whatsapp:+905551119900", deletedKeys[3], "conv:whatsapp:+905551119900");
 
   const stateAfterReset = await getState(PHONE_TEST);
   console.log(`  state after reset: stage=${stateAfterReset.stage} history.length=${stateAfterReset.history.length}`);
@@ -180,9 +201,11 @@ async function main() {
   const deletedKeys2 = await deleteConversationState(PHONE_PLUS_TEST);
   console.log(`  deletedKeys: ${JSON.stringify(deletedKeys2)}`);
 
-  assertLength("deletedKeys length = 2", deletedKeys2, 2);
+  assertLength("deletedKeys length = 4", deletedKeys2, 4);
   assertEqual("deletedKeys[0] = conv:905551119901", deletedKeys2[0], "conv:905551119901");
   assertEqual("deletedKeys[1] = conv:+905551119901", deletedKeys2[1], "conv:+905551119901");
+  assertEqual("deletedKeys[2] = conv:whatsapp:905551119901", deletedKeys2[2], "conv:whatsapp:905551119901");
+  assertEqual("deletedKeys[3] = conv:whatsapp:+905551119901", deletedKeys2[3], "conv:whatsapp:+905551119901");
 
   const stateAfterReset2 = await getState(PHONE_PLUS_TEST);
   console.log(`  state after reset: stage=${stateAfterReset2.stage} history.length=${stateAfterReset2.history.length}`);
@@ -212,12 +235,79 @@ async function main() {
   assertEqual("ok = true", simResponse.ok, true);
   assertEqual("from matches", simResponse.from, PHONE_RESP);
   assertDefined("deletedKeys present", simResponse.deletedKeys);
-  assertLength("deletedKeys length = 2", simResponse.deletedKeys ?? [], 2);
+  assertLength("deletedKeys length = 4", simResponse.deletedKeys ?? [], 4);
   assertEqual(
     "stateStorage is valid",
     ["redis", "memory"].includes(simResponse.stateStorage),
     true
   );
+
+  // ── Section 6: WhatsApp-prefixed key reset (Twilio WhatsApp format) ─────────
+  // Real Twilio WhatsApp messages arrive with From="whatsapp:+15556610104".
+  // The pipeline stores state under conv:whatsapp:+15556610104. The reset
+  // endpoint receives the bare phone number (+15556610104) and must clear all
+  // four variants so the customer starts fresh on the next message.
+  console.log("\n── 6. WhatsApp-prefixed key reset (Twilio From format) ──");
+
+  const WA_PHONE_BARE = "+15556610104";
+  const WA_PHONE_TWILIO = "whatsapp:+15556610104";
+
+  // Seed state under the key Twilio's inbound route actually writes
+  await _setStateForTest(WA_PHONE_TWILIO, {
+    stage: "complete",
+    name: "Zeynep",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    history: [
+      { role: "user", content: "Hi, how much is full-body laser?" },
+      { role: "assistant", content: "Thank you, Zeynep. We received your appointment request." },
+    ],
+    lastUpdated: Date.now(),
+  });
+
+  // Verify the completed state is actually present before reset
+  const waStateBeforeReset = await getState(WA_PHONE_TWILIO);
+  assertEqual("WA1: state present before reset (stage=complete)", waStateBeforeReset.stage, "complete");
+  assertEqual("WA1: name present before reset", waStateBeforeReset.name, "Zeynep");
+
+  // Reset using the bare phone number (what the endpoint receives)
+  const waDeletedKeys = await deleteConversationState(WA_PHONE_BARE);
+  console.log(`  waDeletedKeys: ${JSON.stringify(waDeletedKeys)}`);
+
+  assertLength("WA2: deletedKeys length = 4", waDeletedKeys, 4);
+  assertEqual("WA2: deletedKeys[0] = conv:15556610104",            waDeletedKeys[0], "conv:15556610104");
+  assertEqual("WA2: deletedKeys[1] = conv:+15556610104",           waDeletedKeys[1], "conv:+15556610104");
+  assertEqual("WA2: deletedKeys[2] = conv:whatsapp:15556610104",   waDeletedKeys[2], "conv:whatsapp:15556610104");
+  assertEqual("WA2: deletedKeys[3] = conv:whatsapp:+15556610104",  waDeletedKeys[3], "conv:whatsapp:+15556610104");
+
+  // State stored under the Twilio key must now be cleared
+  const waStateAfterReset = await getState(WA_PHONE_TWILIO);
+  assertEqual("WA3: stage reset to collect_treatment_area after reset", waStateAfterReset.stage, "collect_treatment_area");
+  assertEqual("WA3: history empty after reset", waStateAfterReset.history.length, 0);
+  if (waStateAfterReset.name === undefined) {
+    pass("WA3: name cleared after reset");
+  } else {
+    fail("WA3: name cleared after reset", `expected undefined, got "${waStateAfterReset.name}"`);
+  }
+
+  // Reset using the Twilio-style whatsapp:-prefixed number also covers all variants
+  const WA_PHONE_TWILIO2 = "whatsapp:+905551119903";
+  await _setStateForTest(WA_PHONE_TWILIO2, {
+    stage: "collect_datetime",
+    service: "lazer epilasyon",
+    history: [],
+    lastUpdated: Date.now(),
+  });
+
+  const waDeletedKeys2 = await deleteConversationState(WA_PHONE_TWILIO2);
+  console.log(`  waDeletedKeys2 (from whatsapp: input): ${JSON.stringify(waDeletedKeys2)}`);
+
+  assertLength("WA4: whatsapp:-prefixed input also returns 4 keys", waDeletedKeys2, 4);
+  assertEqual("WA4: deletedKeys[2] = conv:whatsapp:905551119903",  waDeletedKeys2[2], "conv:whatsapp:905551119903");
+  assertEqual("WA4: deletedKeys[3] = conv:whatsapp:+905551119903", waDeletedKeys2[3], "conv:whatsapp:+905551119903");
+
+  const waStateAfterReset2 = await getState(WA_PHONE_TWILIO2);
+  assertEqual("WA4: state cleared when reset called with whatsapp:-prefixed number", waStateAfterReset2.stage, "collect_treatment_area");
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

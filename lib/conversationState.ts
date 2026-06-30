@@ -208,24 +208,43 @@ export async function resetStateForTest(phone: string): Promise<void> {
 }
 
 /**
- * Delete conversation state for both the bare and '+'-prefixed forms of a
- * phone number (e.g. "905419473049" and "+905419473049").
+ * Strips the Twilio WhatsApp transport prefix so the E.164 phone number is
+ * returned regardless of how Twilio sends the From field.
+ * "whatsapp:+15556610104" → "+15556610104"
+ * "+15556610104"          → "+15556610104"
+ * "15556610104"           → "15556610104"
+ */
+export function normalizePhone(phone: string): string {
+  return phone.replace(/^whatsapp:/i, "");
+}
+
+/**
+ * Delete conversation state for all key variants of a phone number.
+ * Handles bare, '+'-prefixed, and Twilio WhatsApp-prefixed forms
+ * (e.g. "15556610104", "+15556610104", "whatsapp:15556610104",
+ * "whatsapp:+15556610104") so the reset endpoint reliably clears state
+ * regardless of how Twilio delivered the original From field.
  * Clears in-memory fallback first, then Redis — throws if Redis fails.
  * Returns the list of Redis key names that were targeted.
  */
 export async function deleteConversationState(phone: string): Promise<string[]> {
-  const base = phone.startsWith("+") ? phone.slice(1) : phone;
+  const stripped = normalizePhone(phone);
+  const base = stripped.startsWith("+") ? stripped.slice(1) : stripped;
   const withPlus = `+${base}`;
-  const keys = [getConversationKey(base), getConversationKey(withPlus)];
+
+  const phoneVariants = [base, withPlus, `whatsapp:${base}`, `whatsapp:${withPlus}`];
+  const keys = phoneVariants.map(getConversationKey);
 
   // Always clear in-memory fallback so it is clean even if Redis throws below.
-  memStore.delete(base);
-  memStore.delete(withPlus);
+  for (const variant of phoneVariants) {
+    memStore.delete(variant);
+  }
 
   const r = getRedis();
   if (r) {
-    await r.del(keys[0]);
-    await r.del(keys[1]);
+    for (const key of keys) {
+      await r.del(key);
+    }
   }
 
   return keys;

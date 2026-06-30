@@ -37,7 +37,7 @@ if (fs.existsSync(envFile)) {
 }
 
 // ── Safe to import lib modules now ────────────────────────────────────────────
-import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest } from "../lib/conversationState";
+import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest, deleteConversationState } from "../lib/conversationState";
 import { processInboundMessage } from "../lib/inboundPipeline";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -520,6 +520,56 @@ async function main() {
   assertDefined("L1: reply non-empty", langResult.assistantReply);
 
   await trySendWhatsApp(PHONE_LANG, langResult.assistantReply);
+
+  // ── Section 9: Reset clears Twilio WhatsApp-prefixed state ──────────────
+  // Root cause verification: Twilio delivers From="whatsapp:+15556610104".
+  // The inbound route passes that raw string to processInboundMessage(), which
+  // stores state under conv:whatsapp:+15556610104. The reset endpoint receives
+  // only the visible phone number (+15556610104) so it must delete that Twilio
+  // key too. This section proves deleteConversationState covers that case.
+  console.log("\n── 9. Reset clears Twilio WhatsApp-prefixed state ──");
+
+  const WA_RESET_PHONE = "whatsapp:+15556610104";
+  const WA_RESET_BARE  = "+15556610104";
+
+  // Simulate what the Twilio inbound route stores: state under the raw From value
+  await _setStateForTest(WA_RESET_PHONE, {
+    stage: "complete",
+    name: "Zeynep",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    history: [
+      { role: "user",      content: "Merhaba, full body lazer fiyatı ne kadar?" },
+      { role: "assistant", content: "Thank you, Zeynep. We received your appointment request for full body. Our team will follow up shortly." },
+    ],
+    lastUpdated: Date.now(),
+  });
+
+  // Confirm stale completed state is present before reset
+  const waStateBefore = await getState(WA_RESET_PHONE);
+  assertEqual("R1: stale completed state present before reset", waStateBefore.stage, "complete");
+  assertEqual("R1: stale name 'Zeynep' present before reset", waStateBefore.name, "Zeynep");
+
+  // The reset endpoint calls deleteConversationState with the bare number (no whatsapp: prefix)
+  const deletedKeys = await deleteConversationState(WA_RESET_BARE);
+  console.log(`  deletedKeys: ${JSON.stringify(deletedKeys)}`);
+
+  // Must include the Twilio WhatsApp-prefixed key
+  if (deletedKeys.includes("conv:whatsapp:+15556610104")) {
+    pass("R2: conv:whatsapp:+15556610104 is in deletedKeys");
+  } else {
+    fail("R2: conv:whatsapp:+15556610104 is in deletedKeys", `got: ${JSON.stringify(deletedKeys)}`);
+  }
+
+  // State stored under Twilio's key must now be cleared
+  const waStateAfter = await getState(WA_RESET_PHONE);
+  assertEqual("R3: stage = collect_treatment_area after reset (fresh start)", waStateAfter.stage, "collect_treatment_area");
+  assertEqual("R3: history empty after reset", waStateAfter.history.length, 0);
+  if (waStateAfter.name === undefined) {
+    pass("R3: name cleared after reset (no stale Zeynep state)");
+  } else {
+    fail("R3: name cleared after reset", `expected undefined, got "${waStateAfter.name}"`);
+  }
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
