@@ -171,7 +171,8 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
   }
 
   // Stage-aware name fallback — mirrors inboundPipeline.ts logic
-  if (!extractedSlots.name) {
+  // (never runs once a name is captured; heuristic guesses must not overwrite it)
+  if (!extractedSlots.name && !stateBefore.name) {
     const needFallback =
       stateBefore.stage === "collect_name" ||
       stateBefore.history

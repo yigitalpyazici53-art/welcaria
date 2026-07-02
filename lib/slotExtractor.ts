@@ -289,8 +289,17 @@ const LOCATION_PATTERNS: Array<[RegExp, number]> = [
   [/[Bb]ana\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
 ];
 
-// Looks for explicit name introductions
+// Looks for explicit name introductions. Correction patterns come first so
+// "Adım Zeynep değil, Ayşe" captures the corrected name ("Ayşe") instead of the
+// generic prefix pattern capturing "Zeynep değil".
 const NAME_PATTERNS: RegExp[] = [
+  // Turkish correction: "Adım/İsmim <old> değil, <new>"
+  /(?:[Bb]enim\s+)?(?:[Aa]d[ıi]m|[İi]smim)\s+\S+\s+değil[,.]?\s*([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)?)/,
+  // English correction: "My name is <new>, not <old>"
+  /\b[Mm]y\s+name\s+is\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s*,\s*not\b/,
+  // English introduction: "My name is <name>" — capitalized name word(s) only, so
+  // lowercase continuations ("my name is on the form") are not captured
+  /\b[Mm]y\s+name\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/,
   /(?:[İi]sim|[Aa]d(?:ım)?)\s*:\s*([A-ZÇĞİÖŞÜa-zçğışöüI][A-Za-zÇĞİÖŞÜçğışöü]*)/,
   /\b(?:ben|benim adım|ismim|adım)\s+([A-ZÇĞİÖŞÜa-zçğışöüI]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöüI]{2,})?)\b/i,
   /^([A-ZÇĞİÖŞÜ][a-zçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğışöü]{1,})?)\s+(?:olarak|aradım|yazıyorum|merhaba)\b/,
@@ -321,7 +330,29 @@ const NAME_BLOCKLIST = new Set([
   "tüm", "vücut", "beni", "seni", "bize", "uygun", "olur", "var", "yok",
   "için", "ile", "ve", "veya", "sonra", "önce", "kadar", "gibi", "çok",
   "az", "biraz", "sadece", "ancak", "ama", "fakat", "hanım",
+  // conversational status words (Turkish) — "gelmedi bir şey", "cevap gelmedi", etc.
+  "gelmedi", "geldi", "cevap", "olmadı", "oldu", "bekliyorum", "bekliyoruz",
+  "şey", "bir", "ne", "henüz", "hala", "hâlâ", "mesaj", "dönüş",
+  // conversational status words (English) — "nothing happened", "no reply", etc.
+  "nothing", "happened", "reply", "waiting", "still", "arrive", "arrived",
+  "did", "not", "yet", "it", "hello", "hi", "thanks", "thank", "okay", "yes",
 ]);
+
+// Conversational status phrases that must never be treated as a patient name by the
+// bare-word fallback. A patient reporting "gelmedi bir şey" (nothing arrived) or
+// "no reply" is talking about the conversation, not introducing themselves.
+const CONVERSATIONAL_PHRASE_PATTERNS: RegExp[] = [
+  /gelmedi/i,                                 // "gelmedi bir şey", "cevap gelmedi", "mesaj gelmedi"
+  /\bcevap\b/i,
+  /olmad[ıi]/i,                               // "olmadı"
+  /\btamam\b/i,
+  /bekliyor/i,                                // "bekliyorum", "bekliyoruz", "hâlâ bekliyor"
+  /\bne\s+oldu\b/i,
+  /\bnothing\s+happened\b/i,
+  /\bno\s+reply\b/i,
+  /\b(?:did\s+not|didn['’]?t)\s+arrive\b/i,   // "it did not arrive"
+  /\bstill\s+waiting\b/i,
+];
 
 // Pure Turkish/Latin letters, 1 or 2 words, no digits or punctuation
 const BARE_NAME_RE = /^[A-ZÇĞİÖŞÜa-zçğışöü]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöü]{2,})?$/;
@@ -361,10 +392,18 @@ function turkishTitleCase(word: string): string {
  */
 export function extractNameFallback(message: string): string | undefined {
   const trimmed = message.trim();
-  const stripped = trimmed.replace(NAME_INTRO_RE, "").trim();
-  const words = stripped.split(/\s+/).slice(0, 2);
-  const candidate = words.join(" ");
 
+  // Conversational status phrases are never names, whatever their shape.
+  if (CONVERSATIONAL_PHRASE_PATTERNS.some((p) => p.test(trimmed))) return undefined;
+
+  const stripped = trimmed.replace(NAME_INTRO_RE, "").trim();
+  const words = stripped.split(/\s+/);
+
+  // A bare-name reply is 1–2 words. Longer messages are sentences ("gelmedi bir şey"),
+  // so reject them outright instead of guessing a "name" from the first two words.
+  if (words.length > 2) return undefined;
+
+  const candidate = words.join(" ");
   if (!BARE_NAME_RE.test(candidate)) return undefined;
   if (words.some((w) => NAME_BLOCKLIST.has(w.toLowerCase()))) return undefined;
 

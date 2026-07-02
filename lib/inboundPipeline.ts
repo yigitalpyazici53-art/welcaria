@@ -138,7 +138,10 @@ export async function processInboundMessage(
   // by NAME_PATTERNS (which require explicit prefixes). Try the heuristic fallback when
   // no other slots were extracted from this message (guard) and either the stage expects
   // a name or the user appears to be volunteering one early.
-  if (!extractedSlots.name) {
+  // NEVER once a name is captured: a heuristic guess must not overwrite a confirmed name
+  // (e.g. "gelmedi bir şey" after "Zeynep"). Explicit corrections like "Adım Zeynep
+  // değil, Ayşe" still update the name through NAME_PATTERNS above.
+  if (!extractedSlots.name && !stateBefore.name) {
     const noOtherSlots = Object.keys(extractedSlots).filter(k => k !== "leadScore" && k !== "detectedLanguage").length === 0;
     const needFallback =
       noOtherSlots &&

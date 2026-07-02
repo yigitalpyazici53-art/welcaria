@@ -48,7 +48,7 @@ import {
   _setStateForTest,
   type ConversationState,
 } from "../lib/conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage, detectMessageLanguageConfident } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage, detectMessageLanguageConfident, extractNameFallback } from "../lib/slotExtractor";
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
@@ -780,6 +780,115 @@ async function testCompleteStageReply(): Promise<void> {
   assertContains("reply contains treatment area", reply, "full body");
   assertNoProhibitedPhrases("complete reply", reply);
   assertSms("complete reply fits SMS limit", reply);
+}
+
+// ── Name overwrite protection: conversational phrases are not names ────────
+
+async function testNameOverwriteProtection(): Promise<void> {
+  header("Name overwrite protection (conversational phrases are not names)");
+
+  // -- Unit: status messages are never accepted by the bare-name fallback
+  const statusPhrases = [
+    "gelmedi bir şey",
+    "cevap gelmedi",
+    "olmadı",
+    "tamam",
+    "bekliyorum",
+    "ne oldu",
+    "nothing happened",
+    "no reply",
+    "it did not arrive",
+    "still waiting",
+  ];
+  for (const phrase of statusPhrases) {
+    assertEqual(`fallback rejects "${phrase}"`, extractNameFallback(phrase), undefined);
+  }
+
+  // -- Unit: real bare-name replies still work
+  assertEqual('fallback accepts "Zeynep"', extractNameFallback("Zeynep"), "Zeynep");
+  assertEqual('fallback accepts "ben Ayşe"', extractNameFallback("ben Ayşe"), "Ayşe");
+  assertEqual('fallback accepts "ayşe yılmaz"', extractNameFallback("ayşe yılmaz"), "Ayşe Yılmaz");
+
+  // -- Unit: explicit corrections extract the corrected name
+  assertEqual("TR correction captures Ayşe", extractSlots("Adım Zeynep değil, Ayşe.").name, "Ayşe");
+  assertEqual("EN correction captures Sarah", extractSlots("My name is Sarah, not Zeynep.").name, "Sarah");
+
+  // -- Pipeline regression (the physical WhatsApp bug): name captured at an earlier
+  //    stage must survive a later Turkish status message. Old behavior: the fallback
+  //    ran at collect_datetime and rewrote "Zeynep" to "Gelmedi Bir".
+  const phone1 = "+905000000090";
+  await resetState(phone1);
+  await _setStateForTest(phone1, {
+    stage: "collect_datetime",
+    service: "lazer epilasyon",
+    treatmentArea: "full body",
+    firstTimeLaser: true,
+    name: "Zeynep",
+    phone: "+447700900123",
+    detectedLanguage: "turkish",
+    history: [
+      { role: "user", content: "Merhaba lazer için bilgi almak istiyorum, ben Zeynep" },
+      { role: "assistant", content: "Hangi gün ve saat sizin için uygun olur?" },
+    ],
+    lastUpdated: Date.now(),
+  });
+  const r1 = await processInboundMessage({ from: phone1, body: "gelmedi bir şey" });
+  assertEqual("name still Zeynep after 'gelmedi bir şey'", r1.stateAfter.name, "Zeynep");
+  assertNotContains("reply never addresses 'Gelmedi'", r1.assistantReply, "Gelmedi");
+
+  // -- Pipeline regression: completion turn followed by a status message keeps the
+  //    name and the completion reply intact ("Thank you, Zeynep" — never "Gelmedi Bir")
+  const phone2 = "+905000000091";
+  await resetState(phone2);
+  await _setStateForTest(phone2, {
+    stage: "collect_name",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    preferredDate: "saturday",
+    preferredTime: "afternoon",
+    firstTimeLaser: true,
+    detectedLanguage: "english",
+    history: [
+      { role: "user", content: "Hi, how much is full-body laser?" },
+      { role: "assistant", content: "Could I please take your name and phone number?" },
+    ],
+    lastUpdated: Date.now(),
+  });
+  const r2a = await processInboundMessage({ from: phone2, body: "Zeynep, +44 7700 900123" });
+  assertEqual("stage=complete after name+phone", r2a.stateAfter.stage, "complete");
+  assertEqual("name captured as Zeynep", r2a.stateAfter.name, "Zeynep");
+
+  const r2b = await processInboundMessage({ from: phone2, body: "gelmedi bir şey" });
+  assertEqual("name still Zeynep after post-completion status message", r2b.stateAfter.name, "Zeynep");
+  assertContains("completion reply still addresses Zeynep", r2b.assistantReply, "Zeynep");
+  assertNotContains("completion reply never says 'Gelmedi'", r2b.assistantReply, "Gelmedi");
+
+  // -- Pipeline: explicit Turkish correction still updates a captured name
+  const r2c = await processInboundMessage({ from: phone2, body: "Adım Zeynep değil, Ayşe." });
+  assertEqual("TR correction updates name to Ayşe", r2c.stateAfter.name, "Ayşe");
+  assertContains("reply addresses corrected name Ayşe", r2c.assistantReply, "Ayşe");
+
+  // -- Pipeline: explicit English correction still updates a captured name
+  const phone3 = "+905000000092";
+  await resetState(phone3);
+  await _setStateForTest(phone3, {
+    stage: "complete",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    preferredDate: "saturday",
+    firstTimeLaser: true,
+    name: "Zeynep",
+    phone: "+447700900123",
+    detectedLanguage: "english",
+    history: [
+      { role: "user", content: "Zeynep, +44 7700 900123" },
+      { role: "assistant", content: "Thank you, Zeynep. We received your appointment request for full body. Our team will follow up shortly." },
+    ],
+    lastUpdated: Date.now(),
+  });
+  const r3 = await processInboundMessage({ from: phone3, body: "My name is Sarah, not Zeynep." });
+  assertEqual("EN correction updates name to Sarah", r3.stateAfter.name, "Sarah");
+  assertContains("reply addresses corrected name Sarah", r3.assistantReply, "Sarah");
 }
 
 // ── history logging: user message on every turn ───────────────────────────
@@ -1835,6 +1944,7 @@ async function main() {
   await testOwnerPhoneValidation();
   await testServiceConflict();
   await testCompleteStageReply();
+  await testNameOverwriteProtection();
   await testClinicConfigNormalization();
   await testHistoryLogging();
   await testLegacyStateMigration();
