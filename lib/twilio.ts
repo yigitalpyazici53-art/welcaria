@@ -51,11 +51,18 @@ export function buildOwnerAlert(
   if (state.phone) contactParts.push(`Phone: ${state.phone}`);
   if (contactParts.length) lines.push(contactParts.join(" | "));
 
-  // Laser-specific signals
+  // Qualification signals
   const signalParts: string[] = [];
   if (state.firstTimeLaser !== undefined) {
     signalParts.push(`First time: ${state.firstTimeLaser ? "Yes" : "No"}`);
   }
+  if (state.travellingFromAbroad !== undefined) {
+    signalParts.push(`From abroad: ${state.travellingFromAbroad ? "Yes" : "No (local)"}`);
+  }
+  if (state.estimatedGrafts !== undefined) signalParts.push(`Est. grafts: ${state.estimatedGrafts}`);
+  if (state.dentalTreatmentType) signalParts.push(`Dental: ${state.dentalTreatmentType}`);
+  if (state.teethCountOrScope) signalParts.push(`Scope: ${state.teethCountOrScope}`);
+  if (state.treatmentTimeline) signalParts.push(`Timeline: ${state.treatmentTimeline}`);
   if (state.priceInquired) signalParts.push("Price asked: Yes");
   if (signalParts.length) lines.push(signalParts.join(" | "));
 
