@@ -170,7 +170,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // ── Booking link handoff ──────────────────────────────────────────
           if (clinicConfig.bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
             try {
-              await sendWhatsAppText(from, formatBookingLinkMessage(clinicConfig.bookingUrl));
+              await sendWhatsAppText(from, formatBookingLinkMessage(clinicConfig.bookingUrl, result.stateAfter.detectedLanguage));
               await updateState(from, { bookingLinkSent: true });
               console.log("[WhatsApp Webhook] booking link sent");
             } catch (err) {

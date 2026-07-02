@@ -527,21 +527,34 @@ export function extractSlots(message: string): ExtractedSlots {
     result.preTreatmentInquiry = true;
   }
 
-  // Record detected language for prompt context
-  result.detectedLanguage = detectMessageLanguage(message);
+  // Record detected language for prompt/reply context. Only persist a CONFIDENT detection:
+  // a language-neutral message (e.g. "Zeynep, +44 7700 900123") must NOT overwrite the
+  // established conversation language, otherwise completion/link replies would flip to
+  // English on the final turn. Leaving it undefined lets updateState() keep the prior value.
+  const confidentLanguage = detectMessageLanguageConfident(message);
+  if (confidentLanguage) result.detectedLanguage = confidentLanguage;
 
   result.leadScore = calculateLeadScore(result);
 
   return result;
 }
 
+// Distinctive English signals — common function words plus clinic vocabulary. Used to
+// decide whether a Latin-script message is CONFIDENTLY English, as opposed to a
+// language-neutral message that carries no signal at all (e.g. a bare "Zeynep, +44 7700
+// 900123", which is just a name and a phone number).
+const ENGLISH_SIGNAL_RE =
+  /\b(hi|hello|hey|yes|no|first|time|name|my|the|is|are|please|book|booking|appointment|available|availability|today|tomorrow|morning|afternoon|evening|how|much|price|cost|want|need|would|like|thanks|thank|hair|transplant|teeth|tooth|dental|smile|grafts?|from|abroad|full|body|sessions?|laser|for)\b/i;
+
 /**
- * Returns the likely language of a message.
+ * Confident language detection. Returns null when the message carries NO positive
+ * language signal (for example only a name and a phone number). Unlike
+ * detectMessageLanguage(), it never defaults to "english" — callers use the null result
+ * to PRESERVE the established conversation language instead of resetting it to English.
  * Covers 7 languages common in premium international clinic markets.
  * Turkish-specific chars (ğ, ı, İ, Ğ) are the strongest Turkish signal.
- * For other languages, Unicode ranges and keyword heuristics are used.
  */
-export function detectMessageLanguage(message: string): MessageLanguage {
+export function detectMessageLanguageConfident(message: string): MessageLanguage | null {
   // Turkish: dotted-I chars are unambiguous; fall back to Turkish keywords
   if (/[ğıİĞ]/.test(message)) return "turkish";
   if (/\b(merhaba|lazer|epilasyon|fiyat|randevu|için|istiyorum|uygun|tamam|evet|teşekkür)\b/i.test(message)) return "turkish";
@@ -555,7 +568,17 @@ export function detectMessageLanguage(message: string): MessageLanguage {
   if (/[àâæêîïôœùûÿÀÂÆÊÎÏÔŒÙÛŸ]/.test(message) || /\b(bonjour|bonsoir|combien|traitement|rendez-vous|épilation)\b/i.test(message)) return "french";
   // Spanish: inverted punctuation, ñ, or common clinic keywords
   if (/[¿¡ñÑ]/.test(message) || /\b(hola|precio|cu[aá]nto|tratamiento|depilaci[oó]n)\b/i.test(message)) return "spanish";
-  return "english";
+  // English: only when a positive English signal is present — never as a bare default.
+  if (ENGLISH_SIGNAL_RE.test(message)) return "english";
+  return null;
+}
+
+/**
+ * Returns the likely language of a message, defaulting to "english" when no signal is
+ * present. Kept for callers that always need a concrete language (e.g. conflict prompts).
+ */
+export function detectMessageLanguage(message: string): MessageLanguage {
+  return detectMessageLanguageConfident(message) ?? "english";
 }
 
 // Canonical keys — cross-language equivalents within a service family share one key.

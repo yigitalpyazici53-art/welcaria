@@ -58,6 +58,9 @@ function buildQualificationFallbackReply(state: ConversationState): string {
 // fallback never regresses to a generic prompt (or worse, a name/phone request).
 function staticReplyFor(state: ConversationState): string {
   if (state.stage === "collect_qualification") return buildQualificationFallbackReply(state);
+  // Completion copy is language-aware; delegate so the static path never emits the
+  // English-only STAGE_FALLBACK.complete string for a Turkish conversation.
+  if (state.stage === "complete") return buildCompleteReply(state);
   return STAGE_FALLBACK[state.stage] ?? STAGE_FALLBACK.collect_treatment_area;
 }
 
@@ -83,8 +86,24 @@ export interface InboundMessageOptions {
   profileName?: string;
 }
 
+// Completion + follow-up copy MUST match the active conversation language. The language is
+// read from state.detectedLanguage, which slot extraction keeps sticky across the final
+// (often language-neutral) name/phone turn — so a Turkish conversation stays Turkish even
+// when the closing message is just "Zeynep, +44 7700 900123".
 function buildCompleteReply(state: ConversationState): string {
   const area = state.treatmentArea || state.service;
+  if (state.detectedLanguage === "turkish") {
+    if (state.name && area) {
+      return `Teşekkür ederiz ${state.name}. ${area} için randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
+    }
+    if (state.name) {
+      return `Teşekkür ederiz ${state.name}. Randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
+    }
+    if (area) {
+      return `Teşekkür ederiz. ${area} için randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
+    }
+    return "Teşekkür ederiz. Randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.";
+  }
   if (state.name && area) {
     return `Thank you, ${state.name}. We received your appointment request for ${area}. Our team will follow up shortly.`;
   }

@@ -48,7 +48,7 @@ import {
   _setStateForTest,
   type ConversationState,
 } from "../lib/conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage, detectMessageLanguageConfident } from "../lib/slotExtractor";
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
@@ -1763,6 +1763,18 @@ function testPremiumClinicCapabilities(): void {
 
   const langSlotEn = extractSlots("Hi, how much for hair transplant?");
   assertEqual("extractSlots sets detectedLanguage=english", langSlotEn.detectedLanguage, "english");
+
+  // Sticky language: a language-neutral closing message (name + phone only) carries NO
+  // signal, so it must NOT overwrite the established conversation language. extractSlots
+  // leaves detectedLanguage undefined → updateState keeps the prior value → the completion
+  // and booking-link replies stay in the conversation language.
+  const neutralSlot = extractSlots("Zeynep, +44 7700 900123");
+  assertEqual("extractSlots leaves detectedLanguage unset for neutral name+phone", neutralSlot.detectedLanguage, undefined);
+  assertEqual("detectMessageLanguageConfident returns null for neutral name+phone", detectMessageLanguageConfident("Zeynep, +44 7700 900123"), null);
+  assertEqual("detectMessageLanguageConfident detects turkish", detectMessageLanguageConfident("Evet, ilk kez yaptıracağım."), "turkish");
+  assertEqual("detectMessageLanguageConfident detects english on clear switch", detectMessageLanguageConfident("Saturday afternoon works, thanks."), "english");
+  // Backward compatibility: detectMessageLanguage still defaults to english for neutral text.
+  assertEqual("detectMessageLanguage still defaults english for neutral text", detectMessageLanguage("Zeynep, +44 7700 900123"), "english");
 
   console.log("  All 7 premium clinic capability tests passed.");
 }

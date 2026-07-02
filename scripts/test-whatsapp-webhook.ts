@@ -39,6 +39,7 @@ if (fs.existsSync(envFile)) {
 // ── Safe to import lib modules now ────────────────────────────────────────────
 import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest, deleteConversationState } from "../lib/conversationState";
 import { processInboundMessage } from "../lib/inboundPipeline";
+import { formatBookingLinkMessage } from "../lib/clinicConfig";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -730,6 +731,100 @@ async function main() {
   assertEqual("DQ4: stage = complete (exact)", dq4.stateAfter.stage, "complete");
   assertContains("DQ4: reply mentions appointment request", dq4.assistantReply, "appointment request");
   console.log(`  DQ4 stage=${dq4.stateAfter.stage} name=${dq4.stateAfter.name}`);
+
+  // ── Section 11: Completion + follow-up link language consistency ────────────
+  // Root cause: the closing name/phone turn ("Zeynep, +44 7700 900123") is language-
+  // neutral. It used to reset detectedLanguage to "english", flipping the completion
+  // reply AND the booking-link message to English mid-Turkish-conversation. The fix keeps
+  // detectedLanguage sticky and makes both messages read that language.
+  console.log("\n── 11. Completion + follow-up link language consistency ──");
+
+  const LINK_URL = "https://clinic.example/book/abc";
+
+  // 11a. Turkish flow (the reported physical WhatsApp scenario) → Turkish completion + link.
+  const PHONE_TRC = "905551112440";
+  await resetStateForTest(PHONE_TRC);
+  await processInboundMessage({
+    from: PHONE_TRC,
+    body: "Merhaba, cumartesi öğleden sonra full body lazer için boş musunuz?",
+    source: "whatsapp",
+  });
+  await processInboundMessage({ from: PHONE_TRC, body: "Evet, ilk kez yaptıracağım.", source: "whatsapp" });
+  const trc = await processInboundMessage({ from: PHONE_TRC, body: "Zeynep, +44 7700 900123", source: "whatsapp" });
+
+  assertEqual("11a: stage = complete (exact)", trc.stateAfter.stage, "complete");
+  assertContains("11a: name captured", trc.stateAfter.name ?? "", "Zeynep");
+  assertEqual("11a: detectedLanguage stays turkish on neutral final turn", trc.stateAfter.detectedLanguage, "turkish");
+  assertContains("11a: completion reply is Turkish (Teşekkür ederiz)", trc.assistantReply, "Teşekkür ederiz");
+  assertContains("11a: completion reply uses Turkish appointment wording", trc.assistantReply, "randevu talebinizi aldık");
+  assertContains("11a: completion reply uses Turkish follow-up wording", trc.assistantReply, "iletişime geçecektir");
+  assertContains("11a: completion reply addresses the patient by name", trc.assistantReply, "Zeynep");
+  assertNotContains("11a: completion reply not English (Thank you)", trc.assistantReply, "Thank you");
+  assertNotContains("11a: completion reply not English (appointment request)", trc.assistantReply, "appointment request");
+  console.log(`  11a reply="${trc.assistantReply}"`);
+
+  const trcLink = formatBookingLinkMessage(LINK_URL, trc.stateAfter.detectedLanguage);
+  assertContains("11a: link message is Turkish", trcLink, "Randevu talebinizi buradan tamamlayabilirsiniz");
+  assertContains("11a: link message includes the URL", trcLink, LINK_URL);
+  assertNotContains("11a: link message not English", trcLink, "You can complete");
+  console.log(`  11a link="${trcLink}"`);
+
+  // 11b. English flow → English completion + link (regression guard).
+  const PHONE_ENC = "905551112441";
+  await resetStateForTest(PHONE_ENC);
+  await processInboundMessage({
+    from: PHONE_ENC,
+    body: "Hi, is Saturday afternoon free for full body laser?",
+    source: "whatsapp",
+  });
+  await processInboundMessage({ from: PHONE_ENC, body: "Yes, it's my first time.", source: "whatsapp" });
+  const enc = await processInboundMessage({ from: PHONE_ENC, body: "Emma, +44 7700 900222", source: "whatsapp" });
+
+  assertEqual("11b: stage = complete (exact)", enc.stateAfter.stage, "complete");
+  assertEqual("11b: detectedLanguage = english", enc.stateAfter.detectedLanguage, "english");
+  assertContains("11b: completion reply is English (Thank you)", enc.assistantReply, "Thank you");
+  assertContains("11b: completion reply uses English appointment wording", enc.assistantReply, "appointment request");
+  assertNotContains("11b: completion reply not Turkish", enc.assistantReply, "Teşekkür");
+  console.log(`  11b reply="${enc.assistantReply}"`);
+
+  const encLink = formatBookingLinkMessage(LINK_URL, enc.stateAfter.detectedLanguage);
+  assertContains("11b: link message is English", encLink, "You can complete your appointment request here");
+  assertNotContains("11b: link message not Turkish", encLink, "Randevu talebinizi");
+  console.log(`  11b link="${encLink}"`);
+
+  // 11c. Language switch on the FINAL turn follows the latest message language.
+  // Turkish conversation up to collect_datetime, then the patient confirms the slot in
+  // clear English → completion (and link) must switch to English.
+  const PHONE_SW = "905551112442";
+  await resetStateForTest(PHONE_SW);
+  await _setStateForTest(PHONE_SW, {
+    stage: "collect_datetime",
+    name: "Zeynep",
+    phone: "+447700900123",
+    service: "lazer epilasyon",
+    treatmentArea: "full body",
+    serviceCategory: "laser",
+    firstTimeLaser: true,
+    detectedLanguage: "turkish",
+    history: [
+      { role: "user", content: "Merhaba, full body lazer için ilk kez randevu istiyorum." },
+      { role: "assistant", content: "Hangi gün ve saat sizin için uygun olur?" },
+    ],
+    lastUpdated: Date.now(),
+  });
+  const sw = await processInboundMessage({ from: PHONE_SW, body: "Saturday afternoon works, thanks.", source: "whatsapp" });
+
+  assertEqual("11c: stage = complete (exact)", sw.stateAfter.stage, "complete");
+  assertEqual("11c: detectedLanguage switched to english on final turn", sw.stateAfter.detectedLanguage, "english");
+  assertContains("11c: completion reply follows the switch (English)", sw.assistantReply, "Thank you");
+  assertNotContains("11c: completion reply not Turkish after switch", sw.assistantReply, "Teşekkür");
+  const swLink = formatBookingLinkMessage(LINK_URL, sw.stateAfter.detectedLanguage);
+  assertContains("11c: link message follows the switch (English)", swLink, "You can complete");
+  console.log(`  11c reply="${sw.assistantReply}"`);
+
+  // 11d. Direct formatBookingLinkMessage language selection (default when unknown).
+  assertContains("11d: unknown language defaults to English link", formatBookingLinkMessage(LINK_URL, undefined), "You can complete");
+  assertContains("11d: turkish language selects Turkish link", formatBookingLinkMessage(LINK_URL, "turkish"), "tamamlayabilirsiniz");
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

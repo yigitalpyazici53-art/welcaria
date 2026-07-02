@@ -6,6 +6,9 @@ export const clinicConfig = {
   bookingLinkMessage:
     process.env.CLINIC_BOOKING_LINK_MESSAGE ??
     "You can complete your appointment request here: {url}",
+  bookingLinkMessageTr:
+    process.env.CLINIC_BOOKING_LINK_MESSAGE_TR ??
+    "Randevu talebinizi buradan tamamlayabilirsiniz: {url}",
   ownerEmail:     process.env.OWNER_EMAIL             ?? "",
   // Starting prices — clinic-approved guidance only. Leave empty to use safe pricing fallback.
   startingPrices: {
@@ -38,6 +41,13 @@ export const clinicConfig = {
   },
 };
 
-export function formatBookingLinkMessage(url: string): string {
-  return clinicConfig.bookingLinkMessage.replace("{url}", url);
+// Picks the booking-link message template for the active conversation language so the
+// follow-up link matches the completion reply. Turkish → Turkish template; every other
+// language (and unknown/undefined) → the configured default template.
+export function formatBookingLinkMessage(url: string, language?: string): string {
+  const template =
+    language === "turkish"
+      ? clinicConfig.bookingLinkMessageTr
+      : clinicConfig.bookingLinkMessage;
+  return template.replace("{url}", url);
 }

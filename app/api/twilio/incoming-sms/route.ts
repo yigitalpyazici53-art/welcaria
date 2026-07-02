@@ -161,7 +161,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 6. Booking link handoff ──────────────────────────────────────────────
   if (clinicConfig.bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
     try {
-      await sendSms(from, formatBookingLinkMessage(clinicConfig.bookingUrl));
+      await sendSms(from, formatBookingLinkMessage(clinicConfig.bookingUrl, result.stateAfter.detectedLanguage));
       await updateState(from, { bookingLinkSent: true });
       console.log("[SMS] booking link sent");
     } catch (err) {
