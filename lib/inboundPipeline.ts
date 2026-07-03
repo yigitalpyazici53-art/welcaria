@@ -1,4 +1,4 @@
-import { sanitizeSmsText } from "./sanitize";
+import { sanitizeSmsText, sanitizeReplyText } from "./sanitize";
 import {
   getState,
   updateState,
@@ -11,7 +11,7 @@ import type { ExtractedSlots } from "./slotExtractor";
 import { classifyIntent } from "./classifyIntent";
 import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
-import { clinicConfig } from "./clinicConfig";
+import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
 
 const STAGE_FALLBACK: Record<string, string> = {
   collect_treatment_area: `Hi! Which area or treatment are you interested in?`,
@@ -20,6 +20,25 @@ const STAGE_FALLBACK: Record<string, string> = {
   collect_name:           "Could I please take your name and phone number?",
   complete:               "Thank you. We received your appointment request. Our team will follow up shortly.",
 };
+
+// Pricing sentence for the static fallback path. Only speaks about price when the
+// patient asked. If the matching vertical has a clinic-configured starting price that
+// has not been shared yet, it is quoted verbatim (never rounded, converted, or swapped
+// for another vertical's price); once a past assistant reply already contains the
+// sanitized price, nothing is repeated. Without a configured price the caller's safe
+// pricing sentence is used unchanged. Wording is kept short so the qualification
+// question survives the SMS-length truncation applied by sanitizeSmsText().
+function fallbackPricingSentence(state: ConversationState, safePricingSentence: string): string {
+  if (!state.priceInquired) return "";
+  const price = getStartingPriceFor(state.serviceCategory);
+  if (!price) return safePricingSentence;
+  const sharedForm = sanitizeReplyText(price);
+  const alreadyShared =
+    sharedForm.length > 0 &&
+    state.history.some((h) => h.role === "assistant" && h.content.includes(sharedForm));
+  if (alreadyShared) return "";
+  return `Prices start from ${price}; final cost varies by plan. `;
+}
 
 // Deterministic, vertical-aware qualification reply used on the static fallback path
 // (no Anthropic key, or the API failed). It mirrors the qualification question the
@@ -35,20 +54,17 @@ function buildQualificationFallbackReply(state: ConversationState): string {
     if (state.availabilityInquiry || state.preferredDate || state.preferredTime) {
       return `Noted your preferred time; our team will check availability. ${question}`;
     }
-    if (state.priceInquired) {
-      return `Pricing depends on a quick assessment. ${question}`;
-    }
-    return question;
+    return `${fallbackPricingSentence(state, "Pricing depends on a quick assessment. ")}${question}`;
   }
   if (cat === "hair_transplant") {
-    const pricing = state.priceInquired ? "Pricing depends on a graft assessment. " : "";
+    const pricing = fallbackPricingSentence(state, "Pricing depends on a graft assessment. ");
     if (state.estimatedGrafts !== undefined) {
       return `${pricing}Will you be travelling to Istanbul, or already based here?`;
     }
     return `${pricing}Do you know roughly how many grafts you're considering?`;
   }
   if (cat === "dental") {
-    const pricing = state.priceInquired ? "Pricing depends on a quick assessment. " : "";
+    const pricing = fallbackPricingSentence(state, "Pricing depends on a quick assessment. ");
     return `${pricing}Are you considering a full smile design or a few teeth?`;
   }
   return STAGE_FALLBACK.collect_qualification;

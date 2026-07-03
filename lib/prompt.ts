@@ -1,5 +1,6 @@
 import type { ConversationState, Stage } from "./conversationState";
-import { clinicConfig } from "./clinicConfig";
+import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
+import { sanitizeReplyText } from "./sanitize";
 
 function buildClinicContextBlock(): string {
   const parts: string[] = [];
@@ -12,8 +13,11 @@ function buildClinicContextBlock(): string {
   if (sp.dental) priceLines.push(`dental starting from ${sp.dental}`);
   if (priceLines.length) {
     parts.push(
-      `Starting price guidance (use only after the safe pricing response, if the patient presses for an estimate): ${priceLines.join("; ")}. ` +
-      `State exactly "prices start from X" — do not round up, modify, or invent amounts.`
+      `Clinic-approved starting prices: ${priceLines.join("; ")}. ` +
+      `When the patient asks about price for one of these verticals, share that vertical's starting price IMMEDIATELY in your reply — do not defer to a generic pricing answer first. ` +
+      `State exactly "prices start from X" using the configured amount exactly as written — do not round up, modify, convert, or invent amounts. ` +
+      `Make clear it is a starting price, not a final quote, and that the final price depends on the treatment plan (e.g. sessions, grafts, or teeth count). Then ask exactly ONE qualification question. ` +
+      `Never mention a price for a vertical the patient did not ask about, and never bring up price at all if the patient has not asked.`
     );
   }
 
@@ -56,7 +60,27 @@ function buildClinicContextBlock(): string {
   return parts.length > 0 ? `\n\nClinic context:\n- ${parts.join("\n- ")}` : "";
 }
 
-const CLINIC_CONTEXT_BLOCK = buildClinicContextBlock();
+// Deterministic starting-price directive for the current turn. Fires only when the
+// patient has asked about price, the matching vertical has a configured starting price,
+// and no previous assistant reply already contained that exact amount (checked against
+// the sanitized form, since replies are sanitized before being stored in history).
+// This guarantees the configured price is shared on the FIRST direct price inquiry and
+// is not repeated on every subsequent turn.
+function startingPriceDirective(state: ConversationState): string {
+  if (!state.priceInquired) return "";
+  const price = getStartingPriceFor(state.serviceCategory);
+  if (!price) return "";
+  const sharedForm = sanitizeReplyText(price);
+  const alreadyShared =
+    sharedForm.length > 0 &&
+    state.history.some((h) => h.role === "assistant" && h.content.includes(sharedForm));
+  if (alreadyShared) return "";
+  return (
+    `The patient asked about price and the clinic has a configured starting price for this treatment. ` +
+    `Begin the reply by stating that prices start from exactly "${price}" — a starting price, not a final quote — ` +
+    `and that the final price depends on the exact treatment plan. Then, in the same message: `
+  );
+}
 
 // Clinic persona for RandevuFlow.
 // Does NOT invent prices, give medical advice, or make booking confirmations.
@@ -80,7 +104,7 @@ Rules:
 - Be warm, polite, professional, and calm.
 - Use correct sentence punctuation. If you greet with "Welcome to ${clinicDesc}", always end the clinic name with a period before the next sentence: "Welcome to ${clinicDesc}. [next sentence]"
 - Never ask for information you already have.
-- If asked about pricing, never invent prices or give exact figures.
+- If asked about pricing, never invent prices or give exact figures. The ONLY exception: a clinic-approved starting price listed in the Clinic context below — share it per that guidance. When no starting price is configured for the matching vertical, use these safe responses:
   - Laser/aesthetic — Turkish: "Fiyat bilgisi işlem bölgesine ve seans sayısına göre değişebilir. Ekibimiz sizinle iletişime geçip net bilgi paylaşacaktır."
   - Laser/aesthetic — English: "Pricing depends on the treatment area and number of sessions. Our team will share exact details when they follow up."
   - Hair transplant — Turkish: "Fiyat bilgisi greft sayısı ve tedavi planına göre değişebilir. Ekibimiz net bilgi için sizinle iletişime geçecektir."
@@ -184,7 +208,9 @@ export function buildSystemPrompt(state: ConversationState): string {
       ? buildQualificationTask(state)
       : NEXT_FIELD_PROMPT[state.stage];
 
-  return `${BASE_PROMPT}${CLINIC_CONTEXT_BLOCK}${knownSection}${guardSection}\nNext step: ${nextTask}`;
+  // Context block is built per call (not at module load) so clinic config reads stay
+  // current and the block is testable without re-importing the module.
+  return `${BASE_PROMPT}${buildClinicContextBlock()}${knownSection}${guardSection}\nNext step: ${startingPriceDirective(state)}${nextTask}`;
 }
 
 // Legacy export — keeps any remaining static import from breaking

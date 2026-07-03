@@ -41,6 +41,23 @@ export const clinicConfig = {
   },
 };
 
+// Maps a conversation service category to that vertical's configured starting price.
+// Returns "" when the category is unknown or the price is not configured, so callers
+// fall back to the safe pricing response. Reads clinicConfig at call time — never
+// returns another vertical's price.
+export function getStartingPriceFor(serviceCategory: string | undefined): string {
+  switch (serviceCategory) {
+    case "laser":
+      return clinicConfig.startingPrices.laser;
+    case "hair_transplant":
+      return clinicConfig.startingPrices.hairTransplant;
+    case "dental":
+      return clinicConfig.startingPrices.dental;
+    default:
+      return "";
+  }
+}
+
 // Picks the booking-link message template for the active conversation language so the
 // follow-up link matches the completion reply. Turkish → Turkish template; every other
 // language (and unknown/undefined) → the configured default template.

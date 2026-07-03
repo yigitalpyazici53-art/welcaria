@@ -1920,6 +1920,157 @@ function testMultiLanguageDetection(): void {
   console.log("  All multi-language detection tests passed.");
 }
 
+// ── Configured starting prices (Feature 4 — share on first direct price inquiry) ──
+
+async function testConfiguredStartingPrices(): Promise<void> {
+  header("Configured starting prices: first direct price inquiry (prompt + static fallback)");
+
+  const savedPrices = { ...clinicConfig.startingPrices };
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY; // force the deterministic static fallback path
+
+  try {
+    clinicConfig.startingPrices.laser = "2.500 TL";
+    clinicConfig.startingPrices.hairTransplant = "40.000 TL";
+    clinicConfig.startingPrices.dental = "10.000 TL";
+
+    // ── Anthropic path: system prompt guidance ──
+    const laserState: ConversationState = {
+      stage: "collect_qualification",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      priceInquired: true,
+      history: [],
+      lastUpdated: Date.now(),
+    };
+    const prompt = buildSystemPrompt(laserState);
+    assertContains("prompt: context lists exact laser price", prompt, "laser/aesthetic starting from 2.500 TL");
+    assertContains("prompt: share-immediately instruction", prompt, "IMMEDIATELY");
+    assertNotContains("prompt: old defer-to-safe-response instruction removed", prompt, "only after the safe pricing response");
+    assertContains("prompt: exact-amount safeguard kept", prompt, "do not round up");
+    assertContains("prompt: no unsolicited price rule", prompt, "has not asked");
+
+    const directive = prompt.split("Next step:")[1] ?? "";
+    assertContains("directive: quotes exact laser price", directive, '"2.500 TL"');
+    assertContains("directive: starting price, not a final quote", directive, "not a final quote");
+    assertNotContains("directive: no hair transplant price leak", directive, "40.000 TL");
+    assertNotContains("directive: no dental price leak", directive, "10.000 TL");
+    assertContains("directive: still asks the first-time question", directive, "first time");
+
+    // Directive absent when the patient has not asked about price
+    const noAskDirective = buildSystemPrompt({ ...laserState, priceInquired: false }).split("Next step:")[1] ?? "";
+    assertNotContains("directive absent when price not asked", noAskDirective, "2.500 TL");
+
+    // Directive not repeated once a past assistant reply contained the price
+    const sharedDirective = buildSystemPrompt({
+      ...laserState,
+      history: [
+        { role: "user", content: "Merhaba, full body lazer fiyatı ne kadar?" },
+        { role: "assistant", content: "Fiyatlarımız 2.500 TL fiyatından başlamaktadır. Bu işlemi ilk kez mi yaptıracaksınız?" },
+      ],
+    }).split("Next step:")[1] ?? "";
+    assertNotContains("directive not repeated after price already shared", sharedDirective, "2.500 TL");
+
+    // Hair transplant / dental directives use only their own vertical's price
+    const htDirective = buildSystemPrompt({
+      stage: "collect_qualification",
+      service: "saç ekimi",
+      serviceCategory: "hair_transplant",
+      priceInquired: true,
+      history: [],
+      lastUpdated: Date.now(),
+    }).split("Next step:")[1] ?? "";
+    assertContains("HT directive: exact hair transplant price", htDirective, '"40.000 TL"');
+    assertNotContains("HT directive: no laser price leak", htDirective, "2.500 TL");
+
+    const dnDirective = buildSystemPrompt({
+      stage: "collect_qualification",
+      service: "veneers",
+      serviceCategory: "dental",
+      priceInquired: true,
+      history: [],
+      lastUpdated: Date.now(),
+    }).split("Next step:")[1] ?? "";
+    assertContains("dental directive: exact dental price", dnDirective, '"10.000 TL"');
+    assertNotContains("dental directive: no hair transplant price leak", dnDirective, "40.000 TL");
+
+    // ── Static fallback path (pipeline without ANTHROPIC_API_KEY) ──
+
+    // 1. Turkish laser price inquiry → exact configured price + first-time question
+    const PHONE_TR = "+905000001081";
+    await resetState(PHONE_TR);
+    const tr = await processInboundMessage({ from: PHONE_TR, body: "Merhaba, full body lazer fiyatı ne kadar?" });
+    assertContains("fallback TR laser: exact configured price", tr.assistantReply, "2.500 TL");
+    assertContains("fallback TR laser: asks first-time question", tr.assistantReply, "first time");
+    assertNotContains("fallback TR laser: no HT price leak", tr.assistantReply, "40.000 TL");
+    assertNotContains("fallback TR laser: no dental price leak", tr.assistantReply, "10.000 TL");
+    assertEqual("fallback TR laser: stage = collect_qualification (unchanged)", tr.stateAfter.stage, "collect_qualification");
+    assertSms("fallback TR laser: SMS-safe, question survives truncation", tr.assistantReply);
+    console.log(`  [TR laser reply]: "${tr.assistantReply}"`);
+
+    // 2. English laser price inquiry → same behavior
+    const PHONE_EN = "+905000001082";
+    await resetState(PHONE_EN);
+    const en = await processInboundMessage({ from: PHONE_EN, body: "Hi, how much is full body laser hair removal?" });
+    assertContains("fallback EN laser: exact configured price", en.assistantReply, "2.500 TL");
+    assertContains("fallback EN laser: asks first-time question", en.assistantReply, "first time");
+    assertSms("fallback EN laser: SMS-safe", en.assistantReply);
+
+    // 3. Hair transplant: own price only; price NOT repeated on the next turn
+    const PHONE_HT = "+905000001083";
+    await resetState(PHONE_HT);
+    const ht1 = await processInboundMessage({ from: PHONE_HT, body: "Merhaba saç ekimi fiyatı ne kadar?" });
+    assertContains("fallback HT: exact configured price", ht1.assistantReply, "40.000 TL");
+    assertContains("fallback HT: asks graft question", ht1.assistantReply, "grafts");
+    assertNotContains("fallback HT: no laser price leak", ht1.assistantReply, "2.500 TL");
+    assertSms("fallback HT: SMS-safe", ht1.assistantReply);
+
+    const ht2 = await processInboundMessage({ from: PHONE_HT, body: "Around 3000 grafts" });
+    assertEqual("fallback HT turn 2: grafts captured", ht2.stateAfter.estimatedGrafts, 3000);
+    assertNotContains("fallback HT turn 2: price NOT repeated", ht2.assistantReply, "40.000 TL");
+    assertContains("fallback HT turn 2: asks travel question", ht2.assistantReply, "travelling");
+
+    // 4. Dental: own price only
+    const PHONE_DN = "+905000001084";
+    await resetState(PHONE_DN);
+    const dn = await processInboundMessage({ from: PHONE_DN, body: "Hi, how much are veneers in Istanbul?" });
+    assertContains("fallback dental: exact configured price", dn.assistantReply, "10.000 TL");
+    assertContains("fallback dental: asks scope question", dn.assistantReply, "smile design");
+    assertNotContains("fallback dental: no laser price leak", dn.assistantReply, "2.500 TL");
+    assertNotContains("fallback dental: no HT price leak", dn.assistantReply, "40.000 TL");
+    assertSms("fallback dental: SMS-safe", dn.assistantReply);
+
+    // 5. Price NOT mentioned when the patient did not ask
+    const PHONE_NOASK = "+905000001085";
+    await resetState(PHONE_NOASK);
+    const noAsk = await processInboundMessage({ from: PHONE_NOASK, body: "Merhaba, full body lazer için randevu almak istiyorum" });
+    assertNotContains("fallback no-ask: price not mentioned proactively", noAsk.assistantReply, "2.500 TL");
+    assertContains("fallback no-ask: still asks first-time question", noAsk.assistantReply, "first time");
+
+    // 6. Empty config for the matching vertical → safe pricing fallback preserved
+    clinicConfig.startingPrices.laser = "";
+    const PHONE_EMPTY = "+905000001086";
+    await resetState(PHONE_EMPTY);
+    const empty = await processInboundMessage({ from: PHONE_EMPTY, body: "Merhaba, full body lazer fiyatı ne kadar?" });
+    assertContains("fallback empty laser config: safe pricing response", empty.assistantReply, "Pricing depends on a quick assessment");
+    assertNotContains("fallback empty laser config: no stale price", empty.assistantReply, "2.500 TL");
+    assertNotContains("fallback empty laser config: no other vertical price", empty.assistantReply, "40.000 TL");
+    assertContains("fallback empty laser config: asks first-time question", empty.assistantReply, "first time");
+
+    // Prompt side of the empty case: no laser price line or directive; safe scripts remain
+    const emptyPrompt = buildSystemPrompt(laserState);
+    assertNotContains("prompt empty laser config: no laser price line", emptyPrompt, "laser/aesthetic starting from");
+    assertNotContains("prompt empty laser config: no laser directive", emptyPrompt.split("Next step:")[1] ?? "", "2.500 TL");
+    assertContains("prompt empty laser config: Turkish safe script kept", emptyPrompt, "Fiyat bilgisi");
+  } finally {
+    clinicConfig.startingPrices.laser = savedPrices.laser;
+    clinicConfig.startingPrices.hairTransplant = savedPrices.hairTransplant;
+    clinicConfig.startingPrices.dental = savedPrices.dental;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1954,6 +2105,7 @@ async function main() {
   await testQualificationFlows();
   await testAnthropicModelConfig();
   testPremiumClinicCapabilities();
+  await testConfiguredStartingPrices();
   testMultiLanguageDetection();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
