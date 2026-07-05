@@ -109,6 +109,61 @@ for (const msg of ["", "   "]) {
   assertEqual(`empty (${JSON.stringify(msg)}) → phone fallback`, buildNurablaReply(msg), NURABLA_FALLBACK);
 }
 
+// ── 6. Informal / typo'd menu phrasing ────────────────────────────────────────
+console.log("\n6. Informal menu phrasing");
+for (const msg of [
+  "fiayt nedir",
+  "fiat listesi",
+  "ne kadar",
+  "neler var",
+  "menuyu at",
+  "menuu gönder",
+]) {
+  const intent = detectNurablaIntent(msg);
+  assertTrue(`"${msg}" → menu intent`, intent.menu);
+  assertTrue(`"${msg}" → not location`, !intent.location);
+}
+
+// ── 7. Informal / typo'd location phrasing ────────────────────────────────────
+console.log("\n7. Informal location phrasing");
+for (const msg of [
+  "yer neresi",
+  "yeriniz nerde",
+  "knoum atar mısınız",
+  "aders nedir",
+  "hangi tarafta",
+  "mekan nerede",
+]) {
+  const intent = detectNurablaIntent(msg);
+  assertTrue(`"${msg}" → location intent`, intent.location);
+  assertTrue(`"${msg}" → not menu`, !intent.menu);
+}
+
+// ── 8. False positives must not trigger any intent ────────────────────────────
+console.log("\n8. False positives");
+for (const msg of [
+  "iş yeri başvurusu",
+  "rezervasyon var mı",
+  "eleman arıyor musunuz",
+  "sipariş verebilir miyim",
+]) {
+  const intent = detectNurablaIntent(msg);
+  assertTrue(`"${msg}" → no intent`, !intent.location && !intent.menu);
+  assertEqual(`"${msg}" → phone fallback`, buildNurablaReply(msg), NURABLA_FALLBACK);
+}
+
+// ── 9. Combined menu + location with typos ────────────────────────────────────
+console.log("\n9. Menu + location with typos");
+{
+  const msg = "fiayt ve knoum atar mısınız";
+  const intent = detectNurablaIntent(msg);
+  assertTrue(`"${msg}" → both intents`, intent.location && intent.menu);
+  const reply = buildNurablaReply(msg);
+  assertTrue("contains menu link", reply.includes(NURABLA.menuUrl));
+  assertTrue("contains Çekmeköy address", reply.includes(CEKMEKOY.address));
+  assertTrue("contains Başakşehir address", reply.includes(BASAKSEHIR.address));
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log("");
 if (failures > 0) {
