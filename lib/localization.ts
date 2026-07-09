@@ -32,6 +32,39 @@ export function resolveLanguage(language?: string): SupportedLanguage {
     : "english";
 }
 
+// ── Treatment-area display labels ─────────────────────────────────────────────
+// Slot extraction stores ONE canonical value per area (e.g. "full body", "koltuk altı").
+// Those canonical values must never reach the patient reply or the owner alert raw in the
+// wrong language ("full body" inside a Turkish sentence, "koltuk altı" inside a German one).
+// This maps each canonical value to a localized display label. TR/EN/DE are the
+// live-verified languages; other languages fall back to the English label. Any value not in
+// the map — a service name ("lazer epilasyon") or free text — passes through UNCHANGED, so
+// callers can pass `treatmentArea || service` safely.
+const TREATMENT_AREA_LABELS: Record<string, Partial<Record<SupportedLanguage, string>>> = {
+  "full body":   { turkish: "tüm vücut",   english: "full body", german: "Ganzkörper" },
+  "koltuk altı": { turkish: "koltuk altı", english: "underarms", german: "Achseln" },
+  "bikini":      { turkish: "bikini",      english: "bikini",    german: "Bikinizone" },
+  "dudak üstü":  { turkish: "dudak üstü",  english: "upper lip", german: "Oberlippe" },
+  "çene":        { turkish: "çene",        english: "chin",      german: "Kinn" },
+  "sırt":        { turkish: "sırt",        english: "back",      german: "Rücken" },
+  "göğüs":       { turkish: "göğüs",       english: "chest",     german: "Brust" },
+  "genital":     { turkish: "genital",     english: "genital",   german: "Intimbereich" },
+  "bacak":       { turkish: "bacak",       english: "legs",      german: "Beine" },
+  "kol":         { turkish: "kol",         english: "arms",      german: "Arme" },
+  "yüz":         { turkish: "yüz",         english: "face",      german: "Gesicht" },
+};
+
+// Localizes a canonical treatment-area value for outbound text. The SINGLE helper used by
+// both the patient completion reply and the owner alert — do not localize areas anywhere
+// else. Unknown values (service names, free text) are returned verbatim.
+export function treatmentAreaLabel(area?: string, language?: string): string {
+  if (!area) return "";
+  const entry = TREATMENT_AREA_LABELS[area.trim().toLowerCase()];
+  if (!entry) return area;
+  const lang = resolveLanguage(language);
+  return entry[lang] ?? entry.english ?? area;
+}
+
 // ── Turkish ablative suffix ("2.500 TL" → "2.500 TL'den") ────────────────────
 // Turkish vowel harmony + final-consonant hardening decide between den/dan/ten/tan.
 // The suffix is chosen from the PRONUNCIATION of the trailing token, so the configured

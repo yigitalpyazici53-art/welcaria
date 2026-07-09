@@ -1,5 +1,6 @@
 import twilio from "twilio";
 import { sanitizeSmsText } from "./sanitize";
+import { treatmentAreaLabel } from "./localization";
 import type { ConversationState } from "./conversationState";
 
 function validateTwilioConfig(): { accountSid: string; authToken: string; fromNumber: string } {
@@ -41,9 +42,12 @@ export function buildOwnerAlert(
   if (state.stage) metaParts.push(`Stage: ${state.stage}`);
   if (metaParts.length) lines.push(metaParts.join(" | "));
 
-  // Service / treatment area
+  // Service / treatment area (area localized to the conversation language so the owner
+  // sees "tüm vücut", not the canonical "full body", for a Turkish lead).
   if (state.service) lines.push(`Service: ${state.service}`);
-  if (state.treatmentArea) lines.push(`Area: ${state.treatmentArea}`);
+  if (state.treatmentArea) {
+    lines.push(`Area: ${treatmentAreaLabel(state.treatmentArea, state.detectedLanguage)}`);
+  }
 
   // Contact line
   const contactParts: string[] = [];

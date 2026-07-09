@@ -2,7 +2,7 @@ import { Outfit } from "next/font/google";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "LeadAura Command Center — Aurea Aesthetic Clinic",
+  title: "RandevuFlow Command Center — Aurea Aesthetic Clinic",
   description: "WhatsApp lead response system for premium clinics.",
 };
 
@@ -324,7 +324,7 @@ export default function CommandCenter() {
                   lineHeight: 1,
                 }}
               >
-                LeadAura
+                RandevuFlow
               </div>
               <div
                 style={{
@@ -753,7 +753,7 @@ export default function CommandCenter() {
                         marginBottom: "4px",
                       }}
                     >
-                      LeadAura
+                      RandevuFlow
                     </div>
                     <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#f1f5f9", lineHeight: 1.3 }}>
                       Daily Lead Summary
@@ -831,7 +831,7 @@ export default function CommandCenter() {
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
             <p style={{ fontSize: "0.78rem", color: C.textMuted, lineHeight: 1.55, margin: 0 }}>
-              LeadAura does not provide medical advice, does not invent exact pricing, and does not confirm bookings.
+              RandevuFlow does not provide medical advice, does not invent exact pricing, and does not confirm bookings.
               Your team remains responsible for final patient follow-up.
             </p>
           </div>

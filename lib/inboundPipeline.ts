@@ -20,6 +20,7 @@ import {
 } from "./slotExtractor";
 import type { ExtractedSlots } from "./slotExtractor";
 import { classifyIntent } from "./classifyIntent";
+import { recordInboundMessage, getDefaultTenantId } from "./compliance";
 import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
 import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
@@ -34,6 +35,7 @@ import {
   preTreatmentReply,
   transferReply,
   nameUpdatedReply,
+  treatmentAreaLabel,
 } from "./localization";
 
 // Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
@@ -183,6 +185,8 @@ export interface InboundMessageOptions {
   body: string;
   source?: string;
   profileName?: string;
+  /** Compliance tenant (clinic number identity); defaults to the deployment tenant. */
+  tenantId?: string;
 }
 
 // Completion + follow-up copy MUST match the active conversation language. The language is
@@ -191,7 +195,9 @@ export interface InboundMessageOptions {
 // when the closing message is just "Zeynep, +44 7700 900123". All seven supported
 // languages are covered by the localization dictionary.
 function buildCompleteReply(state: ConversationState): string {
-  const area = state.treatmentArea || state.service;
+  // Localize the canonical treatment area to the conversation language so a Turkish reply
+  // never says "full body". A service name (no treatmentArea) passes through unchanged.
+  const area = treatmentAreaLabel(state.treatmentArea, state.detectedLanguage) || state.service;
   return completionReply(state.detectedLanguage, state.name, area);
 }
 
@@ -199,6 +205,18 @@ export async function processInboundMessage(
   options: InboundMessageOptions
 ): Promise<InboundPipelineResult> {
   const { from, body, source } = options;
+
+  // Compliance: persist lastInboundAt for the 24h-window gate and reset the
+  // per-inbound reply counters. Must run for EVERY inbound patient message —
+  // outbound sends are blocked for threads with no recorded inbound.
+  try {
+    await recordInboundMessage(from, options.tenantId ?? getDefaultTenantId());
+  } catch (err) {
+    console.error(
+      "[Pipeline] compliance inbound recording failed:",
+      err instanceof Error ? err.message : err
+    );
+  }
 
   // Unicode-preserving sanitization: Arabic/Cyrillic/accented messages must reach slot
   // extraction and language detection intact. SMS charset/length limits apply only at

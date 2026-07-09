@@ -1,26 +1,35 @@
-# RapidFlow Plumbing — AI SMS Receptionist
+# RandevuFlow — AI WhatsApp Lead Intake for Aesthetic Clinics
 
-An AI-powered SMS triage bot for a local plumbing business. Customers text the Twilio number; Claude collects issue type, fixture, preferred time, and address; the owner receives an alert when the conversation is complete or urgent.
+An AI-powered WhatsApp intake assistant for laser and aesthetic clinics. A patient messages the clinic on WhatsApp; Claude answers, qualifies the inquiry (treatment area, first-time status, preferred time, contact details), and the clinic owner receives an alert with a ready-to-follow-up lead. The same pipeline also serves inbound SMS and a missed-call text-back, so no channel goes unanswered.
+
+The assistant does not give medical advice, does not invent exact prices, and does not confirm bookings — the clinic's team always owns the final patient follow-up.
 
 **Conversation state is Redis-backed (Upstash) with a 24-hour TTL.** State survives serverless cold starts and scales across multiple Vercel instances. An in-memory fallback is active only when the Redis env vars are absent — not suitable for production.
 
 ---
 
-## SMS flow
+## WhatsApp flow (primary — Meta Cloud API)
 
-1. Customer texts the Twilio number
-2. Twilio POSTs to `/api/twilio/incoming-sms`
-3. Claude generates a short reply (≤120 chars, ASCII-only)
-4. Reply is sent back via Twilio
-5. Owner receives an alert SMS when urgency is HIGH or booking info is complete
+1. Patient messages the clinic's WhatsApp number
+2. Meta POSTs to `/api/meta/whatsapp/webhook` (signature-verified)
+3. Claude generates a reply in the patient's language and advances the qualification stage
+4. Reply is sent back via the Meta Graph API
+5. Owner receives an alert when the lead is HOT or the request is complete
 6. Interaction is logged to Google Sheets (optional)
+
+## SMS flow (secondary — Twilio)
+
+1. Patient texts the Twilio number
+2. Twilio POSTs to `/api/twilio/incoming-sms`
+3. The same pipeline generates a short reply (≤120 chars, ASCII-only for SMS)
+4. Reply is sent back via Twilio
 
 ## Missed-call text-back flow
 
-1. Customer calls the Twilio number
+1. Patient calls the Twilio number
 2. Twilio POSTs to `/api/twilio/incoming-call`
 3. Caller hears: "Sorry we missed your call. We just sent you a text." — call ends
-4. Customer receives: "Hi, this is RapidFlow Plumbing. Sorry we missed your call. What can we help with?"
+4. Patient receives an SMS inviting them to continue on text
 5. Any SMS reply re-enters the normal AI flow
 
 ---
@@ -31,8 +40,9 @@ An AI-powered SMS triage bot for a local plumbing business. Customers text the T
 |---|---|
 | Hosting | Vercel (serverless) |
 | AI | Anthropic Claude |
-| SMS | Twilio Programmable Messaging |
-| State | Upstash Redis REST (24-hour TTL per caller) |
+| WhatsApp | Meta WhatsApp Cloud API (primary channel) |
+| SMS / Voice | Twilio Programmable Messaging |
+| State | Upstash Redis REST (24-hour TTL per conversation) |
 | Log | Google Sheets (optional) |
 
 ---
@@ -146,7 +156,7 @@ Redeploy once more after this update.
 npm run test-sms
 
 # Test a specific message against Claude
-npm run test-sms -- "my water heater is leaking"
+npm run test-sms -- "tüm vücut lazer epilasyon fiyatı nedir?"
 ```
 
 ---
@@ -419,7 +429,6 @@ If `stateStorage` is `"memory"`, multi-turn state will not survive across server
 |---|---|
 | **State per caller** | Redis key `conv:{phone}`, 24-hour TTL, refreshed on every message |
 | **MessageSid dedup** | Redis `SET dedup:{sid} NX EX 300` — Twilio retries are dropped in <1 ms |
-| **Gas smell bypass** | Matches gas keywords → hardcoded life-safety reply, no Claude call |
 | **Owner alert dedup** | `ownerAlertedHighUrgency` / `ownerAlertedComplete` flags in Redis state prevent re-alerting across restarts |
 | **In-memory fallback** | Active when Redis env vars are absent; single-process only, not for production |
 

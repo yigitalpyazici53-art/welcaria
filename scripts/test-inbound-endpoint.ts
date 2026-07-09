@@ -56,6 +56,7 @@ import type { ConversationState } from "../lib/conversationState";
 import type { ExtractedSlots } from "../lib/slotExtractor";
 import { buildOwnerAlert } from "../lib/twilio";
 import { generateSmsReply } from "../lib/anthropic";
+import { completionReply, treatmentAreaLabel } from "../lib/localization";
 
 // Turkish characters allowed in sanitized output
 const TURKISH_CHARS = "ÇçĞğİıÖöŞşÜü";
@@ -282,10 +283,14 @@ async function main() {
   console.log(`  reply         : ${r1.assistantReply}`);
 
   assertEqual("intent = price_question", r1.intent, "price_question");
-  assertEqual("treatmentArea = tüm vücut", r1.extractedSlots.treatmentArea, "tüm vücut");
+  // Slot extraction normalizes every full-body expression to the canonical "full body"
+  // (see slotExtractor TREATMENT_AREA_PATTERNS); the localized "tüm vücut" is applied only
+  // at outbound-render time (completion reply / owner alert), not in stored slots.
+  assertEqual("treatmentArea = full body (canonical)", r1.extractedSlots.treatmentArea, "full body");
   assertEqual("service normalized = lazer epilasyon", r1.extractedSlots.service, "lazer epilasyon");
   assertEqual("priceInquired = true", r1.extractedSlots.priceInquired, true);
-  assertEqual("stage = collect_datetime", r1.nextStage, "collect_datetime");
+  // Laser leads pass through the qualification gate (firstTimeLaser) before datetime.
+  assertEqual("stage = collect_qualification", r1.nextStage, "collect_qualification");
   assertDefined("reply non-empty", r1.assistantReply);
   assertNoProhibitedPhrases("no prohibited phrases", r1.assistantReply);
   assertNotContains("reply must not invent price (₺)", r1.assistantReply, "₺");
@@ -350,6 +355,22 @@ async function main() {
     console.log(`  alert preview:\n${r1.ownerAlertPreview.split("\n").map(l => "    " + l).join("\n")}`);
   }
 
+  // ── Section 5b: Canonical treatment-area must not leak into outbound text ──
+  // Regression guard for the localization leak: the canonical "full body" value must never
+  // reach the patient reply or owner alert raw. A Turkish completion reply must read
+  // "tüm vücut"; a German one "Ganzkörper". The single treatmentAreaLabel() helper enforces this.
+  console.log("\n── 5b. Treatment-area localization (no canonical leak) ──");
+
+  const trCompletion = completionReply("turkish", "Zeynep", treatmentAreaLabel("full body", "turkish"));
+  assertNotContains("TR completion reply must not leak 'full body'", trCompletion, "full body");
+  assertContains("TR completion reply says 'tüm vücut'", trCompletion, "tüm vücut");
+
+  const deCompletion = completionReply("german", "Max", treatmentAreaLabel("full body", "german"));
+  assertNotContains("DE completion reply must not leak 'full body'", deCompletion, "full body");
+  assertContains("DE completion reply says 'Ganzkörper'", deCompletion, "Ganzkörper");
+
+  assertEqual("treatmentAreaLabel passes service names through unchanged", treatmentAreaLabel("lazer epilasyon", "turkish"), "lazer epilasyon");
+
   // ── Section 6: Multi-turn continuity (3 turns, same from) ────────────────
   console.log("\n── 6. Multi-turn continuity (3 turns, same from) ──");
 
@@ -360,13 +381,13 @@ async function main() {
   const mt1 = await runPipeline(PHONE_MT, "Merhaba tüm vücut lazer epilasyon fiyatı ne kadar?");
   console.log(`  T1 treatmentArea=${mt1.stateAfter.treatmentArea ?? "(none)"} stage=${mt1.nextStage} score=${mt1.stateAfter.leadScore}`);
   assertDefined("T1: treatmentArea set", mt1.stateAfter.treatmentArea);
-  assertEqual("T1: stage = collect_datetime", mt1.nextStage, "collect_datetime");
+  assertEqual("T1: stage = collect_qualification", mt1.nextStage, "collect_qualification");
   assertEqual("T1: priceInquired", mt1.stateAfter.priceInquired, true);
 
   // T2: first-time + date/time — treatment area must carry over
   const mt2 = await runPipeline(PHONE_MT, "ilk kez yaptıracağım, cumartesi öğleden sonra gelebilirim.");
   console.log(`  T2 firstTimeLaser=${mt2.stateAfter.firstTimeLaser} date=${mt2.stateAfter.preferredDate ?? "(none)"} time=${mt2.stateAfter.preferredTime ?? "(none)"} stage=${mt2.nextStage}`);
-  assertContains("T2: treatmentArea preserved from T1", mt2.stateAfter.treatmentArea ?? "", "tüm vücut");
+  assertContains("T2: treatmentArea preserved from T1", mt2.stateAfter.treatmentArea ?? "", "full body");
   assertEqual("T2: firstTimeLaser = true", mt2.stateAfter.firstTimeLaser, true);
   assertContains("T2: preferredDate = cumartesi", mt2.stateAfter.preferredDate ?? "", "cumartesi");
   assertContains("T2: preferredTime = öğleden sonra", mt2.stateAfter.preferredTime ?? "", "öğleden sonra");
@@ -377,7 +398,7 @@ async function main() {
   console.log(`  T3 name=${mt3.stateAfter.name ?? "(none)"} phone=${mt3.stateAfter.phone ?? "(none)"} leadScore=${mt3.stateAfter.leadScore} stage=${mt3.nextStage}`);
   console.log(`     ownerAlert:\n${(mt3.ownerAlertPreview ?? "(null)").split("\n").map(l => "       " + l).join("\n")}`);
 
-  assertContains("T3: treatmentArea preserved", mt3.stateAfter.treatmentArea ?? "", "tüm vücut");
+  assertContains("T3: treatmentArea preserved", mt3.stateAfter.treatmentArea ?? "", "full body");
   assertContains("T3: name includes Zeynep", mt3.stateAfter.name ?? "", "Zeynep");
   assertDefined("T3: phone captured", mt3.stateAfter.phone);
   assertEqual("T3: firstTimeLaser preserved", mt3.stateAfter.firstTimeLaser, true);
@@ -454,8 +475,8 @@ async function main() {
   console.log(`  T1 treatmentArea=${da1.stateAfter.treatmentArea ?? "(none)"} stage=${da1.nextStage} score=${da1.stateAfter.leadScore}`);
   console.log(`  reply: ${da1.assistantReply}`);
 
-  assertEqual("DA/T1: treatmentArea = tüm vücut", da1.stateAfter.treatmentArea, "tüm vücut");
-  assertEqual("DA/T1: stage = collect_datetime", da1.nextStage, "collect_datetime");
+  assertEqual("DA/T1: treatmentArea = full body (canonical)", da1.stateAfter.treatmentArea, "full body");
+  assertEqual("DA/T1: stage = collect_qualification", da1.nextStage, "collect_qualification");
   assertEqual("DA/T1: priceInquired = true", da1.stateAfter.priceInquired, true);
   assertDefined("DA/T1: reply non-empty", da1.assistantReply);
   assertNoProhibitedPhrases("DA/T1: no prohibited phrases", da1.assistantReply);
@@ -471,7 +492,7 @@ async function main() {
   assertEqual("DB/T2: firstTimeLaser = true", db1.stateAfter.firstTimeLaser, true);
   assertContains("DB/T2: preferredDate = cumartesi", db1.stateAfter.preferredDate ?? "", "cumartesi");
   assertEqual("DB/T2: stage = collect_name", db1.nextStage, "collect_name");
-  assertContains("DB/T2: treatmentArea preserved", db1.stateAfter.treatmentArea ?? "", "tüm vücut");
+  assertContains("DB/T2: treatmentArea preserved", db1.stateAfter.treatmentArea ?? "", "full body");
 
   // ── Section 11: Demo scenario C — name + phone → complete + HOT alert ────
   console.log("\n── 11. Demo C: Zeynep, 0532... → complete + HOT ──");
@@ -491,12 +512,13 @@ async function main() {
     assertContains("DC/T3: ownerAlert has action", dc1.ownerAlertPreview, "ACTION: Follow up ASAP");
   }
 
-  // shouldLogToSheet logic
+  // shouldLogToSheet logic — MUST mirror lib/inboundPipeline.ts (service|area + name +
+  // date|time). Location is NOT required there (it is backfilled from a clinic default),
+  // so the earlier `&& location` check here was stricter than production and wrongly failed.
   const dc_wouldLog = !!(
     (dc1.stateAfter.service || dc1.stateAfter.treatmentArea) &&
     dc1.stateAfter.name &&
-    (dc1.stateAfter.preferredDate || dc1.stateAfter.preferredTime) &&
-    dc1.stateAfter.location
+    (dc1.stateAfter.preferredDate || dc1.stateAfter.preferredTime)
   );
   if (dc_wouldLog) pass("DC/T3: wouldLogToSheet = true (lead complete)");
   else fail("DC/T3: wouldLogToSheet = true", "lead data incomplete — missing required fields");
@@ -525,9 +547,11 @@ async function main() {
   // ── Section 13: Treatment area extraction ─────────────────────────────────
   console.log("\n── 13. Slot extraction: treatment areas ──");
 
+  // Every full-body expression normalizes to the canonical "full body"; other areas keep
+  // their canonical Turkish value. Localization to "tüm vücut" happens only at render time.
   const areaTests: Array<[string, string]> = [
-    ["Tüm vücut lazer istiyorum", "tüm vücut"],
-    ["full body epilasyon fiyatı", "tüm vücut"],
+    ["Tüm vücut lazer istiyorum", "full body"],
+    ["full body epilasyon fiyatı", "full body"],
     ["koltuk altı için randevu", "koltuk altı"],
     ["koltukaltı lazer", "koltuk altı"],
     ["bacak epilasyon", "bacak"],
@@ -614,17 +638,18 @@ async function main() {
   assertContains("S1: name includes Zeynep", sSlots.name ?? "", "Zeynep");
   assertEqual("S1: phone", sSlots.phone, "05321234567");
   assertContains("S1: service = lazer epilasyon", sSlots.service ?? "", "lazer epilasyon");
-  assertEqual("S1: treatmentArea = tüm vücut", sSlots.treatmentArea, "tüm vücut");
+  assertEqual("S1: treatmentArea = full body (canonical)", sSlots.treatmentArea, "full body");
   assertContains("S1: preferredDate = cumartesi", sSlots.preferredDate ?? "", "cumartesi");
   assertContains("S1: preferredTime = öğleden sonra", sSlots.preferredTime ?? "", "öğleden sonra");
   assertEqual("S1: location = Ümraniye", sSlots.location, "Ümraniye");
 
-  // Structured message must reach complete in a single pipeline turn
-  // (firstTimeLaser is advisory — its absence does not block completion)
+  // A laser lead that never states first-time status stalls at the qualification gate by
+  // design (getNextStage → collect_qualification until firstTimeLaser is set). The structured
+  // message below omits it, so completion is correctly withheld until it is answered (see S2).
   const PHONE_S1 = "+905551112500";
   await resetStateForTest(PHONE_S1);
   const sr1 = await runPipeline(PHONE_S1, structuredMsg);
-  assertEqual("S1: stage = complete (firstTimeLaser advisory, not required)", sr1.nextStage, "complete");
+  assertEqual("S1: stage = collect_qualification (firstTimeLaser required for laser)", sr1.nextStage, "collect_qualification");
 
   // With firstTimeLaser in a short single message that stays under SMS_MAX_CHARS (120):
   // sanitizeSmsText collapses newlines to spaces and truncates at 120 chars —
