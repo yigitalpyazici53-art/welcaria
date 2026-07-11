@@ -57,6 +57,7 @@ import type { ExtractedSlots } from "../lib/slotExtractor";
 import { buildOwnerAlert } from "../lib/twilio";
 import { generateSmsReply } from "../lib/anthropic";
 import { completionReply, treatmentAreaLabel } from "../lib/localization";
+import { buildSystemPrompt } from "../lib/prompt";
 
 // Turkish characters allowed in sanitized output
 const TURKISH_CHARS = "ÇçĞğİıÖöŞşÜü";
@@ -543,6 +544,70 @@ async function main() {
     const s = extractSlots(msg);
     assertEqual(`FT: "${msg.slice(0, 40)}" → firstTimeLaser`, s.firstTimeLaser, expected);
   }
+
+  // ── Section 12b: Multilingual first-treatment answers (regression) ────────
+  // Live bug: the assistant asks "…your first laser TREATMENT?" but extraction only
+  // recognised "first time"/"first visit" in English (and "première fois" in French),
+  // so a patient echoing the question's own wording ("my first treatment") never set
+  // firstTimeLaser — stalling the laser gate at collect_qualification and re-asking
+  // across language switches. These assert the affirmative answer is captured in each
+  // supported language, including the mixed-intent + language-switch cases.
+  console.log("\n── 12b. First-treatment answer across languages (regression) ──");
+
+  const mlFirstTimeTests: Array<[string, boolean]> = [
+    ["ilk kez yaptıracağım", true],                                                // Turkish
+    ["Yes, this would be my first treatment.", true],                             // English "treatment"
+    ["Yes, my first laser treatment.", true],                                     // English echoing full wording
+    ["Ja, das ist meine erste Behandlung.", true],                               // German
+    ["Oui, ce serait mon premier traitement.", true],                            // French "traitement"
+    ["Oui, ma première épilation laser.", true],                                 // French "épilation"
+    ["Sí, sería mi primera sesión.", true],                                      // Spanish "sesión"
+    // Negation guards: a returning patient answering "no, not my first …" stays false,
+    // never mis-read as first-time=true by the new affirmative patterns.
+    ["No, not my first treatment.", false],
+    ["Non, ce n'est pas mon premier traitement.", false],
+  ];
+  for (const [msg, expected] of mlFirstTimeTests) {
+    const s = extractSlots(msg);
+    assertEqual(`ML-FT: "${msg.slice(0, 44)}" → firstTimeLaser`, s.firstTimeLaser, expected);
+  }
+
+  // Mixed-intent: first-treatment answer + datetime preference in one English message.
+  // BOTH must be extracted — this is the exact live-conversation message.
+  const mix = extractSlots("Yes, this would be my first treatment. Is Saturday afternoon available?");
+  assertEqual("ML-FT mixed-intent: firstTimeLaser = true", mix.firstTimeLaser, true);
+  assertContains("ML-FT mixed-intent: preferredDate = saturday", mix.preferredDate ?? "", "saturday");
+  assertContains("ML-FT mixed-intent: preferredTime = afternoon", mix.preferredTime ?? "", "afternoon");
+
+  // Unrelated follow-ups (a pricing or "how many sessions" question) must NOT set
+  // firstTimeLaser — they were correctly re-asked in the live thread because the patient
+  // never actually answered the first-treatment question in those turns.
+  assertEqual("ML-FT: FR 'how many sessions' leaves firstTimeLaser unset",
+    extractSlots("Combien de séances sont généralement nécessaires ?").firstTimeLaser, undefined);
+  assertEqual("ML-FT: DE pricing question leaves firstTimeLaser unset",
+    extractSlots("Wie viel kostet die Laserbehandlung?").firstTimeLaser, undefined);
+
+  // Pipeline continuity with a language switch between question and answer:
+  // Turkish opener establishes the laser gate; the patient answers the first-treatment
+  // question in English (mixed with a datetime). The gate must resolve and the flow must
+  // advance past collect_qualification — never re-ask the first-treatment question.
+  console.log("\n── 12c. Language-switch first-treatment continuity (regression) ──");
+  const PHONE_ML = "+905551119988";
+  await resetStateForTest(PHONE_ML);
+
+  const ml1 = await runPipeline(PHONE_ML, "Merhaba, tüm vücut lazer epilasyon düşünüyorum.");
+  assertEqual("ML/T1: stage = collect_qualification (laser gate open)", ml1.nextStage, "collect_qualification");
+  assertEqual("ML/T1: firstTimeLaser still unset", ml1.stateAfter.firstTimeLaser, undefined);
+
+  const ml2 = await runPipeline(PHONE_ML, "Yes, this would be my first treatment. Is Saturday afternoon available?");
+  assertEqual("ML/T2: firstTimeLaser = true (EN answer to TR question)", ml2.stateAfter.firstTimeLaser, true);
+  assertContains("ML/T2: preferredTime carried (saturday/afternoon)", `${ml2.stateAfter.preferredDate ?? ""} ${ml2.stateAfter.preferredTime ?? ""}`, "afternoon");
+  assertEqual("ML/T2: gate resolved → advanced to collect_name", ml2.nextStage, "collect_name");
+  assertContains("ML/T2: treatmentArea preserved across language switch", ml2.stateAfter.treatmentArea ?? "", "full body");
+
+  // Once firstTimeLaser is known, the system prompt must instruct the model NOT to re-ask.
+  const promptAfter = buildSystemPrompt(ml2.stateAfter);
+  assertContains("ML/T2: prompt guards against re-asking first-time", promptAfter, "First-time treatment question already answered");
 
   // ── Section 13: Treatment area extraction ─────────────────────────────────
   console.log("\n── 13. Slot extraction: treatment areas ──");

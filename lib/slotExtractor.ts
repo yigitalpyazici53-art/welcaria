@@ -138,16 +138,20 @@ const FIRST_TIME_FALSE_PATTERNS: RegExp[] = [
   /tekrar\s+başla/i,
   /seansa?\s+devam/i,
   /önceden\s+yaptırd[ıi][mn]/i,
+  // English — "not my first time/visit/treatment/session". English had no negation guard,
+  // so before this the affirmative patterns below (e.g. "first treatment") would misfire on
+  // a returning patient's "no, not my first treatment". Checked first, so it wins.
+  /\bnot\s+(?:my\s+|the\s+)?first\s+(?:time|visit|treatment|session)\b/i,
   // German — "not the first time", "already had some sessions / started"
   /\bnicht\s+(?:mein\s+|das\s+)?erste[sn]?\s+mal\b/i,
   /\bschon\s+(?:einige|mehrere|ein\s+paar|paar|mal|einmal)\b/i,
   /\bbereits\s+(?:behandelt|begonnen|angefangen|gemacht|sitzungen)\b/i,
   /\bwar\s+schon\b/i,
-  // French — "not my first time", "already did / had / started"
-  /pas\s+(?:ma\s+|la\s+|sa\s+)?premi[eè]re\s+fois/i,
+  // French — "not my first time/treatment/session", "already did / had / started"
+  /pas\s+(?:mon\s+|ma\s+|la\s+|sa\s+)?premi(?:er|[eè]re)\s+(?:fois|traitement|s[ée]ance|[ée]pilation)/i,
   /d[ée]j[àa]\s+(?:fait|eu|commenc[ée]|essay[ée])/i,
-  // Spanish — "it's not my first time", "I already did it"
-  /no\s+(?:es|era)\s+(?:mi\s+|la\s+|su\s+)?primera\s+vez/i,
+  // Spanish — "it's not my first time/session/treatment", "I already did it"
+  /no\s+(?:es|era)\s+(?:mi\s+|la\s+|su\s+)?primer(?:a)?\s+(?:vez|sesi[oó]n|tratamiento|depilaci[oó]n)/i,
   /ya\s+(?:lo\s+)?(?:he\s+)?(?:hecho|empec[ée]|comenc[ée]|realic[ée])/i,
   // Russian — "not the first time", "already did / went through"
   /не\s+впервые/i,
@@ -171,19 +175,25 @@ const FIRST_TIME_TRUE_PATTERNS: RegExp[] = [
   /başlama[dm][ıi][mn]?/i,
   /yaptırmadım/i,
   /hiç\s+denemedim/i,
-  // English
+  // English — "first time/visit" plus "first (laser) treatment/session". The assistant's own
+  // question says "first laser treatment", so a patient echoing that wording ("my first
+  // treatment") must be recognised — matching only "first time" silently dropped the answer
+  // and stalled the laser gate at collect_qualification forever.
   /\bfirst\s+time\b/i,
   /\bfirst\s+visit\b/i,
+  /\bfirst\s+(?:laser\s+)?(?:treatment|session)\b/i,
   /\bnever\s+(?:done|had|been)\b/i,
-  // German — "first time", "first (laser) treatment"
+  // German — "first time", "first (laser) treatment/session"
   /\bzum\s+ersten\s+mal\b/i,
   /\berste[sn]?\s+mal\b/i,
-  /\berste\s+(?:laser)?behandlung\b/i,
-  // French — "first time", "never done/tried"
+  /\berste\s+(?:laser)?(?:behandlung|sitzung)\b/i,
+  // French — "first time / treatment / session / épilation", "never done/tried"
   /premi[eè]re\s+fois/i,
+  /premi(?:er|[eè]re)\s+(?:traitement|s[ée]ance|[ée]pilation)/i,
   /jamais\s+(?:fait|essay[ée]|eu)/i,
-  // Spanish — "first time", "never done it"
+  // Spanish — "first time / session / treatment / depilación", "never done it"
   /primera\s+vez/i,
+  /primer(?:a)?\s+(?:sesi[oó]n|tratamiento|depilaci[oó]n)/i,
   /nunca\s+(?:lo\s+)?(?:he\s+)?hecho/i,
   // Russian — "first time", "never did"
   /впервые/i,
