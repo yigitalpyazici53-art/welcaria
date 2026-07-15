@@ -178,42 +178,53 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             `[WhatsApp Webhook] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
           );
 
-          // Send the assistant reply back to the customer — through the
-          // mandatory compliance gate (24h window, inbound-only, rate limits,
-          // circuit breaker). A blocked send is logged by the gate itself.
-          const replyResult = await sendOutbound({
-            to: from,
-            body: result.assistantReply,
-            kind: "bot_reply",
-            channel: "meta",
-            tenantId,
-            threadKey: from,
-          });
-          console.log(
-            `[WhatsApp Webhook] reply sent=${replyResult.sent} decision=${replyResult.decision}`
-          );
+          // Human handoff pause: when the thread is flagged, the bot stops
+          // auto-replying (bot reply AND booking link are both skipped) so a human
+          // owner can take over. The inbound message was already recorded and the
+          // conversation state advanced inside processInboundMessage above, so the
+          // 24h-window gate and state logging stay accurate regardless.
+          const paused = result.stateAfter.humanHandoff === true;
 
-          // ── Booking link handoff ──────────────────────────────────────────
-          // Shared decision: runtime booking-URL read, safe diagnostic log, and the
-          // flag-only-after-successful-send ordering — identical to the Twilio route.
-          // The injected sender throws when the gate blocks or the transport fails,
-          // so bookingLinkSent stays false and a later turn retries.
-          await handleBookingHandoff({
-            from,
-            stateAfter: result.stateAfter,
-            channel: "meta",
-            send: async (to, sendBody) => {
-              const r = await sendOutbound({
-                to,
-                body: sendBody,
-                kind: "booking_handoff",
-                channel: "meta",
-                tenantId,
-                threadKey: from,
-              });
-              if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
-            },
-          });
+          if (paused) {
+            console.log("[WhatsApp Webhook] humanHandoff active — bot reply skipped");
+          } else {
+            // Send the assistant reply back to the customer — through the
+            // mandatory compliance gate (24h window, inbound-only, rate limits,
+            // circuit breaker). A blocked send is logged by the gate itself.
+            const replyResult = await sendOutbound({
+              to: from,
+              body: result.assistantReply,
+              kind: "bot_reply",
+              channel: "meta",
+              tenantId,
+              threadKey: from,
+            });
+            console.log(
+              `[WhatsApp Webhook] reply sent=${replyResult.sent} decision=${replyResult.decision}`
+            );
+
+            // ── Booking link handoff ──────────────────────────────────────────
+            // Shared decision: runtime booking-URL read, safe diagnostic log, and the
+            // flag-only-after-successful-send ordering — identical to the Twilio route.
+            // The injected sender throws when the gate blocks or the transport fails,
+            // so bookingLinkSent stays false and a later turn retries.
+            await handleBookingHandoff({
+              from,
+              stateAfter: result.stateAfter,
+              channel: "meta",
+              send: async (to, sendBody) => {
+                const r = await sendOutbound({
+                  to,
+                  body: sendBody,
+                  kind: "booking_handoff",
+                  channel: "meta",
+                  tenantId,
+                  threadKey: from,
+                });
+                if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
+              },
+            });
+          }
 
           // ── Owner notification ────────────────────────────────────────────
           if (result.shouldNotifyOwner) {
@@ -224,8 +235,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               const flagUpdates: Record<string, boolean> = {};
               if (result.stateAfter.urgency === "high" && !result.stateAfter.ownerAlertedHighUrgency)
                 flagUpdates.ownerAlertedHighUrgency = true;
-              if (result.stateAfter.stage === "complete" && !result.stateAfter.ownerAlertedComplete)
+              if (result.stateAfter.stage === "complete" && !result.stateAfter.ownerAlertedComplete) {
                 flagUpdates.ownerAlertedComplete = true;
+                // Bot steps back automatically the moment the owner is alerted about a
+                // qualified lead, so the human owner owns the thread from here.
+                flagUpdates.humanHandoff = true;
+              }
               if (Object.keys(flagUpdates).length > 0) await updateState(from, flagUpdates);
             } catch (err) {
               console.error(

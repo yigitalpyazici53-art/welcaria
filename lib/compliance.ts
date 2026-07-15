@@ -574,12 +574,16 @@ export async function complianceGate(params: GateParams): Promise<GateResult> {
 
   // 4. Per-thread caps: at most 1 bot reply per inbound patient message, and a
   //    hard total cap per inbound (reply + booking handoff by default).
+  //    `system` sends are operator/owner-initiated (manual inbox replies,
+  //    missed-call texts) — they are NOT part of the bot's automatic send
+  //    budget, so they bypass the per-inbound total cap. The 24h window, the
+  //    inbound-only guarantee, and the circuit breaker above still apply.
   const meta = await getThreadSendMeta(thread);
   if (kind === "bot_reply" && meta.botRepliesSinceInbound >= 1) {
     await log("RATE_LIMITED", "max 1 bot reply per inbound patient message");
     return { allowed: false, decision: "RATE_LIMITED" };
   }
-  if (meta.totalSinceInbound >= getMaxSendsPerInbound()) {
+  if (kind !== "system" && meta.totalSinceInbound >= getMaxSendsPerInbound()) {
     await log(
       "RATE_LIMITED",
       `per-inbound send cap reached (${getMaxSendsPerInbound()})`
