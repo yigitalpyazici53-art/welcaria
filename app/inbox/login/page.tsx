@@ -94,7 +94,7 @@ export default function InboxLogin() {
               lineHeight: 1,
             }}
           >
-            LeadAura
+            Welcaria
           </div>
           <div
             style={{

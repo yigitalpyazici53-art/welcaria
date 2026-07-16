@@ -338,7 +338,7 @@ export default function InboxPage() {
         <div style={{ display: "flex", alignItems: "center", gap: "0.9rem" }}>
           <div>
             <div style={{ fontSize: "1.05rem", fontWeight: 800, color: C.teal, letterSpacing: "-0.035em", lineHeight: 1 }}>
-              LeadAura
+              Welcaria
             </div>
             <div style={{ fontSize: "0.7rem", color: C.textMuted, fontWeight: 500, marginTop: "2px" }}>
               Pilot Inbox
