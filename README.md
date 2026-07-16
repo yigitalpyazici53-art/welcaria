@@ -1,4 +1,4 @@
-# LeadAura — AI WhatsApp Lead Intake for Aesthetic Clinics
+# Welcaria — AI WhatsApp Lead Intake for Aesthetic Clinics
 
 An AI-powered WhatsApp intake assistant for laser and aesthetic clinics. A patient messages the clinic on WhatsApp; Claude answers, qualifies the inquiry (treatment area, first-time status, preferred time, contact details), and the clinic owner receives an alert with a ready-to-follow-up lead. The same pipeline also serves inbound SMS and a missed-call text-back, so no channel goes unanswered.
 
@@ -163,7 +163,7 @@ npm run test-sms -- "tüm vücut lazer epilasyon fiyatı nedir?"
 
 ## Internal production test endpoint
 
-Simulate an inbound customer message without using Twilio SMS. Runs the full LeadAura pipeline and returns a JSON preview — **no SMS is sent, no Sheets row is written.**
+Simulate an inbound customer message without using Twilio SMS. Runs the full Welcaria pipeline and returns a JSON preview — **no SMS is sent, no Sheets row is written.**
 
 **Endpoint:** `POST /api/test/inbound`
 
@@ -262,7 +262,7 @@ Use this endpoint to test Meta WhatsApp outbound sending directly from the Verce
 {
   "secret": "YOUR_TEST_WEBHOOK_SECRET",
   "to":     "905419473049",
-  "body":   "Test from LeadAura"
+  "body":   "Test from Welcaria"
 }
 ```
 
@@ -271,7 +271,7 @@ Use this endpoint to test Meta WhatsApp outbound sending directly from the Verce
 ```bash
 curl -X POST https://randevuflow.vercel.app/api/test/meta-send \
   -H "Content-Type: application/json" \
-  -d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","to":"905419473049","body":"Test from LeadAura"}'
+  -d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","to":"905419473049","body":"Test from Welcaria"}'
 ```
 
 **Success response:**
@@ -436,7 +436,7 @@ If `stateStorage` is `"memory"`, multi-turn state will not survive across server
 
 ## Meta WhatsApp Cloud API Integration
 
-Incoming WhatsApp messages are handled by the same LeadAura conversation pipeline as SMS. State is stored in Redis (Upstash) with the same 24-hour TTL, so multi-turn WhatsApp conversations persist across serverless invocations.
+Incoming WhatsApp messages are handled by the same Welcaria conversation pipeline as SMS. State is stored in Redis (Upstash) with the same 24-hour TTL, so multi-turn WhatsApp conversations persist across serverless invocations.
 
 **Webhook URL:**
 
@@ -467,7 +467,7 @@ https://randevuflow.vercel.app/api/meta/whatsapp/webhook
 1. The route parses the WhatsApp Business Account payload.
 2. Status updates (delivery/read receipts) are acknowledged with `{ ok: true, processed: false, reason: "status_update" }` and ignored.
 3. Non-text messages return `{ ok: true, processed: false, reason: "unsupported_message" }`.
-4. Text messages are run through the shared LeadAura pipeline (`lib/inboundPipeline.ts`):
+4. Text messages are run through the shared Welcaria pipeline (`lib/inboundPipeline.ts`):
    - Load Redis conversation state for the sender's phone number
    - Classify intent, extract slots (name, service, date, time, location, phone)
    - Generate a Claude reply (or stage-based fallback if Anthropic is unavailable)
