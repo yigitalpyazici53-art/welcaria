@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { INBOX_COOKIE, sessionTokenFor } from "@/lib/inboxAuth";
+import { INBOX_COOKIE, isValidSession } from "@/lib/inboxAuth";
 
 // Guards the pilot inbox: the /inbox page and every /api/inbox/* route require a
-// valid session cookie (set by POST /api/inbox/login). Unauthenticated page
-// requests redirect to the login view; unauthenticated API requests get 401.
-// The login endpoint and the login page are exempt so they stay reachable.
+// valid session. A request is authorized only when its inbox_session cookie holds
+// a token that still exists in Redis (set by POST /api/inbox/login, TTL 12h).
+// Unauthenticated page requests redirect to the login view; unauthenticated API
+// requests get 401. The login endpoint and the login page are exempt so they stay
+// reachable.
 export const config = {
   matcher: ["/inbox/:path*", "/api/inbox/:path*"],
 };
@@ -21,22 +23,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  const password = process.env.INBOX_PASSWORD;
-  if (!password) {
-    // Misconfiguration — fail closed.
-    if (isApi) {
-      return NextResponse.json(
-        { ok: false, error: "INBOX_PASSWORD not configured" },
-        { status: 401 }
-      );
-    }
-    return NextResponse.redirect(new URL(LOGIN_PAGE, req.url));
-  }
-
   const cookie = req.cookies.get(INBOX_COOKIE)?.value;
-  const expected = await sessionTokenFor(password);
-
-  if (cookie && cookie === expected) {
+  if (await isValidSession(cookie)) {
     return NextResponse.next();
   }
 
