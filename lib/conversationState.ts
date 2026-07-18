@@ -35,6 +35,11 @@ export interface ConversationState {
   bookingLinkSent?: boolean;
   // When true, the bot stops auto-replying so a human owner can take over the thread.
   humanHandoff?: boolean;
+  // KVKK consent: set true once the AI-intake disclosure has been sent on the
+  // first turn of a conversation, so it is shown exactly once. consentTimestamp
+  // is the epoch-ms time of that disclosure (an auditable consent record).
+  consentGiven?: boolean;
+  consentTimestamp?: number;
   // Qualification fields
   serviceCategory?: ServiceCategory;
   travellingFromAbroad?: boolean;

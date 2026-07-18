@@ -178,6 +178,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             `[WhatsApp Webhook] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
           );
 
+          // KVKK consent disclosure — sent once, on the first inbound of a new
+          // conversation, BEFORE the assistant reply. kind "system" so it is not
+          // counted against the bot's per-inbound reply budget; the 24h window,
+          // inbound-only guarantee, and circuit breaker still apply.
+          if (result.consentMessage) {
+            const consentResult = await sendOutbound({
+              to: from,
+              body: result.consentMessage,
+              kind: "system",
+              channel: "meta",
+              tenantId,
+              threadKey: from,
+            });
+            console.log(
+              `[WhatsApp Webhook] consent disclosure sent=${consentResult.sent} decision=${consentResult.decision}`
+            );
+          }
+
           // Human handoff pause: when the thread is flagged, the bot stops
           // auto-replying (bot reply AND booking link are both skipped) so a human
           // owner can take over. The inbound message was already recorded and the

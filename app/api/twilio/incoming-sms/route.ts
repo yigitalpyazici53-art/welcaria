@@ -151,6 +151,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     `[SMS] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
   );
 
+  // ── KVKK consent disclosure — first inbound only, before the reply ───────
+  // Sent once per conversation. kind "system" so it does not consume the bot's
+  // per-inbound reply budget; pacing, rate limits, and the audit log still apply.
+  if (result.consentMessage) {
+    const consentResult = await sendOutbound({
+      to: from,
+      body: result.consentMessage,
+      kind: "system",
+      channel: "twilio",
+      threadKey: from,
+    });
+    console.log(`[SMS] consent disclosure sent=${consentResult.sent} decision=${consentResult.decision}`);
+  }
+
   // ── 5. Send reply to customer — through the mandatory compliance gate ────
   // (24h window + inbound-only apply when `from` is a whatsapp: recipient;
   // pacing, rate limits, and the audit log apply to every patient send.)

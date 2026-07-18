@@ -36,6 +36,7 @@ import {
   transferReply,
   nameUpdatedReply,
   treatmentAreaLabel,
+  consentDisclosure,
 } from "./localization";
 
 // Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
@@ -174,6 +175,12 @@ export interface InboundPipelineResult {
   stateAfter: ConversationState;
   nextStage: string;
   assistantReply: string;
+  /**
+   * KVKK consent/disclosure to send BEFORE the assistant reply on the first turn
+   * of a new conversation. null on every subsequent turn and for any conversation
+   * that already had state (consent already recorded).
+   */
+  consentMessage: string | null;
   ownerAlertPreview: string | null;
   shouldNotifyOwner: boolean;
   shouldLogToSheet: boolean;
@@ -336,6 +343,18 @@ export async function processInboundMessage(
   await addToHistory(from, "user", input);
   await addToHistory(from, "assistant", assistantReply);
 
+  // KVKK consent: on the very first inbound of a conversation (no prior state and
+  // consent not yet recorded), produce the one-time AI-intake disclosure and stamp
+  // the consent flags. The disclosure text uses the language detected from this
+  // first message, defaulting to Turkish. The route sends this BEFORE the reply.
+  let consentMessage: string | null = null;
+  if (isFirstMessage && !stateBefore.consentGiven) {
+    consentMessage = consentDisclosure(
+      extractedSlots.detectedLanguage ?? stateBefore.detectedLanguage
+    );
+    await updateState(from, { consentGiven: true, consentTimestamp: Date.now() });
+  }
+
   const stateAfter = await getState(from);
 
   const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
@@ -359,6 +378,7 @@ export async function processInboundMessage(
     stateAfter,
     nextStage: stateAfter.stage,
     assistantReply,
+    consentMessage,
     ownerAlertPreview,
     shouldNotifyOwner,
     shouldLogToSheet,

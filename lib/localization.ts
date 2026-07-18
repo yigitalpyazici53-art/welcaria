@@ -394,6 +394,33 @@ export function fallbackText(kind: FallbackKind, language?: string): string {
   return FALLBACKS[kind][resolveLanguage(language)];
 }
 
+// ── KVKK AI-intake consent disclosure ────────────────────────────────────────
+// Sent once, on the first inbound turn of a conversation, before the bot's
+// greeting. Unlike the rest of this module, the default when no conversation
+// language has been detected is TURKISH (the clinic operates in Istanbul), not
+// English — an undetected-language first message is most likely Turkish.
+export function consentDisclosure(language?: string): string {
+  const known = (SUPPORTED_LANGUAGES as readonly string[]).includes(language ?? "");
+  const lang: SupportedLanguage = known ? (language as SupportedLanguage) : "turkish";
+  switch (lang) {
+    case "english":
+      return "This line uses an AI-assisted patient intake system. By continuing, you consent to your data being processed for this purpose.";
+    case "german":
+      return "Diese Leitung nutzt ein KI-gestütztes Patientenaufnahmesystem. Durch Fortsetzen des Gesprächs stimmen Sie der Verarbeitung Ihrer Daten zu diesem Zweck zu.";
+    case "arabic":
+      return "يستخدم هذا الخط نظام استقبال مرضى مدعومًا بالذكاء الاصطناعي. بمتابعتكم المحادثة، فإنكم توافقون على معالجة بياناتكم لهذا الغرض.";
+    case "russian":
+      return "На этой линии используется система приёма пациентов с поддержкой искусственного интеллекта. Продолжая переписку, вы соглашаетесь на обработку ваших данных для этой цели.";
+    case "french":
+      return "Cette ligne utilise un système d'accueil des patients assisté par IA. En poursuivant, vous consentez au traitement de vos données à cette fin.";
+    case "spanish":
+      return "Esta línea utiliza un sistema de recepción de pacientes asistido por IA. Al continuar, usted consiente el tratamiento de sus datos para este fin.";
+    case "turkish":
+    default:
+      return "Bu hatta yapay zeka destekli hasta karşılama sistemi kullanılmaktadır. Mesajlaşmaya devam ederek kişisel verilerinizin bu amaçla işlenmesini kabul etmiş olursunuz.";
+  }
+}
+
 // Laser-family service names across the supported languages (canonical service strings
 // plus raw patient phrasing). Used to pick the specific laser wording over the generic
 // "this treatment" question — never generic when a laser phrase is known.
