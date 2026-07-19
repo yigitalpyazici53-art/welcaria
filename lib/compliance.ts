@@ -157,6 +157,9 @@ const P = "compliance:";
 const LOG_KEY = `${P}log`;
 const TENANTS_KEY = `${P}tenants`;
 const LOG_MAX_ENTRIES = 1000;
+// The audit log previously had no expiry, so phone numbers persisted forever.
+// New writes set a 90-day TTL (refreshed on each write) so the log self-purges.
+const LOG_TTL_S = 90 * 24 * 60 * 60;
 
 function lastInboundKey(thread: string): string {
   return `${P}lastInbound:${thread}`;
@@ -268,6 +271,7 @@ export async function logCompliance(entry: ComplianceLogEntry): Promise<void> {
     try {
       await r.lpush(LOG_KEY, line);
       await r.ltrim(LOG_KEY, 0, LOG_MAX_ENTRIES - 1);
+      await r.expire(LOG_KEY, LOG_TTL_S);
     } catch (err) {
       console.error(
         "[Compliance] Failed to persist audit entry:",
@@ -642,6 +646,43 @@ export async function handleAccountLevelWebhook(
   if (next) {
     await setQualityState(tenantId, next, `webhook:${field}`);
   }
+}
+
+// ── KVKK erasure ────────────────────────────────────────────────────────────
+
+/**
+ * Delete the per-thread compliance keys (lastInbound + threadSend) for a phone,
+ * covering every transport key variant (bare, "+"-prefixed, and "whatsapp:"
+ * forms) the same way deleteConversationState does. Tenant-level keys (quality,
+ * breaker, bucket, activity, the audit log) are intentionally NOT touched — they
+ * are not per-patient. Clears the memory mirror first, then Redis. Returns the
+ * list of Redis key names targeted.
+ */
+export async function deleteComplianceForThread(thread: string): Promise<string[]> {
+  const stripped = thread.replace(/^whatsapp:/i, "");
+  const base = stripped.startsWith("+") ? stripped.slice(1) : stripped;
+  const withPlus = `+${base}`;
+  const variants = [base, withPlus, `whatsapp:${base}`, `whatsapp:${withPlus}`];
+
+  const keys: string[] = [];
+  for (const v of variants) {
+    keys.push(lastInboundKey(v), threadSendKey(v));
+  }
+
+  for (const key of keys) memKv.delete(key);
+
+  const r = getRedis();
+  if (r) {
+    for (const key of keys) {
+      try {
+        await r.del(key);
+      } catch {
+        // best-effort erase
+      }
+    }
+  }
+
+  return keys;
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────

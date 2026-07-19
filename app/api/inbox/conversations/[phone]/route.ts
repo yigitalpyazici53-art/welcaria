@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import {
   readConversationState,
   getStateStorageMode,
+  deleteConversationState,
 } from "@/lib/conversationState";
+import { deleteComplianceForThread } from "@/lib/compliance";
+import { deleteLeadFromSheets } from "@/lib/googleSheets";
 
 // Single-conversation read for the pilot inbox. Protected by middleware.ts.
 //
@@ -78,4 +81,64 @@ export async function GET(
     lastUpdated: typeof state.lastUpdated === "number" ? state.lastUpdated : null,
     stateStorage,
   });
+}
+
+// ── DELETE — KVKK erasure ─────────────────────────────────────────────────────
+// Full right-to-erasure for one patient: clears the Redis conversation state, the
+// per-thread compliance keys, and every matching row in Google Sheets. Protected
+// by middleware.ts (the /api/inbox/* session guard). Each store is erased
+// independently and its outcome reported, so a failure in one does not silently
+// skip the others — the response makes clear exactly what was removed.
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ phone: string }> }
+): Promise<NextResponse> {
+  const { phone: raw } = await params;
+  const phone = decodeURIComponent(raw ?? "").trim();
+  if (!phone) {
+    return NextResponse.json({ ok: false, error: "Missing phone" }, { status: 400 });
+  }
+
+  const stateStorage = getStateStorageMode();
+
+  // 1. Redis conversation state (handles all key variants internally).
+  let redisState: { deletedKeys: string[]; error: string | null };
+  try {
+    const deletedKeys = await deleteConversationState(phone);
+    redisState = { deletedKeys, error: null };
+  } catch (err) {
+    redisState = { deletedKeys: [], error: err instanceof Error ? err.message : String(err) };
+  }
+
+  // 2. Per-thread compliance keys (lastInbound + threadSend, all variants).
+  let compliance: { deletedKeys: string[]; error: string | null };
+  try {
+    const deletedKeys = await deleteComplianceForThread(phone);
+    compliance = { deletedKeys, error: null };
+  } catch (err) {
+    compliance = { deletedKeys: [], error: err instanceof Error ? err.message : String(err) };
+  }
+
+  // 3. Google Sheets rows matching this phone.
+  const sheets = await deleteLeadFromSheets(phone);
+
+  const anyError = Boolean(redisState.error || compliance.error || sheets.error);
+
+  console.log(
+    `[Inbox] erasure phone=${phone} redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} sheetRows=${sheets.deletedRows} anyError=${anyError}`
+  );
+
+  return NextResponse.json(
+    {
+      ok: !anyError,
+      phone,
+      stateStorage,
+      deleted: {
+        redisState,
+        compliance,
+        sheets,
+      },
+    },
+    { status: anyError ? 500 : 200 }
+  );
 }
