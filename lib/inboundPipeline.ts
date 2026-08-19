@@ -37,6 +37,7 @@ import {
   nameUpdatedReply,
   treatmentAreaLabel,
   consentDisclosure,
+  consentWelcome,
 } from "./localization";
 
 // Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
@@ -176,11 +177,19 @@ export interface InboundPipelineResult {
   nextStage: string;
   assistantReply: string;
   /**
-   * KVKK consent/disclosure to send BEFORE the assistant reply on the first turn
-   * of a new conversation. null on every subsequent turn and for any conversation
-   * that already had state (consent already recorded).
+   * KVKK welcome + AI-intake disclosure. Non-null on every turn where the thread
+   * has no CONFIRMED disclosure yet (a new conversation, a legacy thread without
+   * the flag, or a retry after a blocked/failed send). null once the disclosure
+   * has been confirmed sent. The route MUST report the send result back through
+   * recordConsentDisclosureResult().
    */
   consentMessage: string | null;
+  /**
+   * True on a disclosure turn: the patient has not been informed yet, so this
+   * turn produced NO LLM call, NO slot capture and NO assistant reply. The route
+   * must send `consentMessage` and skip the bot reply / booking handoff.
+   */
+  awaitingConsent: boolean;
   ownerAlertPreview: string | null;
   shouldNotifyOwner: boolean;
   shouldLogToSheet: boolean;
@@ -208,6 +217,105 @@ function buildCompleteReply(state: ConversationState): string {
   return completionReply(state.detectedLanguage, state.name, area);
 }
 
+// ── KVKK consent gate (audit findings O-5 + Y-3) ─────────────────────────────
+//
+// A thread may only reach the Anthropic call once the AI-intake disclosure has been
+// CONFIRMED delivered. Confirmation lives in state, not in "is this the first
+// message": a disclosure that was blocked (CIRCUIT_OPEN / RATE_LIMITED) or failed in
+// transport leaves the gate closed, and the next inbound turn retries it — the patient
+// text is never processed early just because a turn went by.
+//
+// Backward compatibility (no migration): threads created before consentDisclosureSent
+// existed only carry the legacy consentGiven flag, which is accepted as an equivalent
+// confirmation. A thread with neither flag goes through the disclosure flow.
+export function consentDisclosureConfirmed(state: ConversationState): boolean {
+  return state.consentDisclosureSent === true || state.consentGiven === true;
+}
+
+/**
+ * Records the OUTCOME of a disclosure send. Called by the route with the sendOutbound
+ * verdict — this is the only place the consent record is stamped (Y-3: it used to be
+ * written before the send, and independently of whether the send succeeded).
+ *
+ *   sent === true  → consentDisclosureSent + consentDisclosureAt (and the legacy
+ *                    consentGiven/consentTimestamp pair, now equally send-backed).
+ *   sent === false → consentPending stays set; nothing claims consent was obtained.
+ */
+export async function recordConsentDisclosureResult(
+  from: string,
+  sent: boolean,
+  at: number = Date.now()
+): Promise<void> {
+  if (sent) {
+    await updateState(from, {
+      consentDisclosureSent: true,
+      consentDisclosureAt: at,
+      consentPending: false,
+      consentGiven: true,
+      consentTimestamp: at,
+    });
+    return;
+  }
+  await updateState(from, { consentPending: true });
+}
+
+// The disclosure turn. NOTHING about the patient's message is processed here: no
+// intent classification, no slot capture, no state advance and above all no
+// generateSmsReply() — the only thing read out of the message is the detected
+// language (a local regex pass in slotExtractor, nothing leaves the process), so the
+// disclosure itself can be shown in the patient's language.
+async function runConsentDisclosureTurn(
+  from: string,
+  input: string,
+  source: string | undefined,
+  stateBefore: ConversationState,
+  isFirstMessage: boolean
+): Promise<InboundPipelineResult> {
+  let detectedLanguage: string | undefined;
+  try {
+    detectedLanguage = extractSlots(input).detectedLanguage;
+  } catch (err) {
+    console.error(
+      "[Pipeline] language detection failed on consent turn:",
+      err instanceof Error ? err.message : err
+    );
+  }
+  const lang = detectedLanguage ?? stateBefore.detectedLanguage;
+
+  // Two parts, one message: warm greeting first so the turn reads as a welcome, then
+  // the unchanged 7-language disclosure text verbatim (no sanitizer, no composition
+  // with model output). One send = one gate verdict = one auditable consent record.
+  const consentMessage = `${consentWelcome(lang)}\n\n${consentDisclosure(lang)}`;
+
+  const stateAfter = await updateState(from, {
+    consentPending: true,
+    detectedLanguage: lang,
+    source,
+  });
+
+  // The owner is alerted once per new patient, on this very first inbound. A retry
+  // turn (consentPending already set) and the first PROCESSED message afterwards must
+  // not fire a second alert — see the shouldNotifyOwner note in the main path.
+  const isFirstInbound = isFirstMessage && stateBefore.consentPending !== true;
+
+  return {
+    from,
+    input,
+    intent: "consent_disclosure",
+    extractedSlots: lang ? { detectedLanguage: lang } : {},
+    stateBefore,
+    stateAfter,
+    nextStage: stateAfter.stage,
+    assistantReply: "",
+    consentMessage,
+    awaitingConsent: true,
+    ownerAlertPreview: isFirstInbound ? buildOwnerAlert(from, stateAfter) : null,
+    shouldNotifyOwner: isFirstInbound,
+    shouldLogToSheet: false,
+    isFirstMessage,
+  };
+}
+
 export async function processInboundMessage(
   options: InboundMessageOptions
 ): Promise<InboundPipelineResult> {
@@ -231,6 +339,15 @@ export async function processInboundMessage(
   const input = sanitizeReplyText(body).slice(0, INPUT_MAX_CHARS);
   const stateBefore = await getState(from);
   const isFirstMessage = stateBefore.history.length === 0;
+
+  // KVKK GATE — the single entry point to everything below, including the Anthropic
+  // call. While the disclosure is not confirmed sent, this turn produces the welcome +
+  // disclosure and returns; the patient's text is neither classified, extracted,
+  // persisted nor transferred. Normal processing resumes on the next turn.
+  if (!consentDisclosureConfirmed(stateBefore)) {
+    return runConsentDisclosureTurn(from, input, source, stateBefore, isFirstMessage);
+  }
+
   const wasComplete = stateBefore.stage === "complete";
 
   const intentResult = classifyIntent(input, isFirstMessage);
@@ -343,24 +460,21 @@ export async function processInboundMessage(
   await addToHistory(from, "user", input);
   await addToHistory(from, "assistant", assistantReply);
 
-  // KVKK consent: on the very first inbound of a conversation (no prior state and
-  // consent not yet recorded), produce the one-time AI-intake disclosure and stamp
-  // the consent flags. The disclosure text uses the language detected from this
-  // first message, defaulting to Turkish. The route sends this BEFORE the reply.
-  let consentMessage: string | null = null;
-  if (isFirstMessage && !stateBefore.consentGiven) {
-    consentMessage = consentDisclosure(
-      extractedSlots.detectedLanguage ?? stateBefore.detectedLanguage
-    );
-    await updateState(from, { consentGiven: true, consentTimestamp: Date.now() });
-  }
-
+  // No consent handling here any more: this code is only reachable once
+  // consentDisclosureConfirmed(stateBefore) was true at the top of the function.
   const stateAfter = await getState(from);
 
   const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
   const isFirstComplete = stateAfter.stage === "complete" && !stateAfter.ownerAlertedComplete;
   const isHotLead = stateAfter.leadScore === "hot";
-  const shouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
+  // The disclosure turn already sent the "new patient" alert for threads that went
+  // through the consent flow (consentDisclosureAt is stamped only there), so the first
+  // PROCESSED message must not alert a second time. Legacy threads carry no
+  // consentDisclosureAt and keep the original first-message behaviour.
+  const alreadyAlertedOnDisclosure = stateBefore.consentDisclosureAt !== undefined;
+  const isFirstProcessedMessage = isFirstMessage && !alreadyAlertedOnDisclosure;
+  const shouldNotifyOwner =
+    isFirstProcessedMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
   const ownerAlertPreview = shouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
 
   const shouldLogToSheet = !!(
@@ -378,7 +492,8 @@ export async function processInboundMessage(
     stateAfter,
     nextStage: stateAfter.stage,
     assistantReply,
-    consentMessage,
+    consentMessage: null,
+    awaitingConsent: false,
     ownerAlertPreview,
     shouldNotifyOwner,
     shouldLogToSheet,

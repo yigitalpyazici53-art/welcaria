@@ -7,7 +7,10 @@ import {
   writeConversationState,
 } from "@/lib/conversationState";
 import type { ConversationState } from "@/lib/conversationState";
-import { processInboundMessage } from "@/lib/inboundPipeline";
+import {
+  processInboundMessage,
+  recordConsentDisclosureResult,
+} from "@/lib/inboundPipeline";
 import { secretsMatch } from "@/lib/secretCompare";
 import { maskPhone } from "@/lib/sanitize";
 import { isLocalDevelopment } from "@/lib/devGuard";
@@ -26,6 +29,8 @@ function summarizeState(state: ConversationState) {
     historyLength: Array.isArray(state.history) ? state.history.length : 0,
     humanHandoff: state.humanHandoff === true,
     consentGiven: state.consentGiven === true,
+    consentDisclosureSent: state.consentDisclosureSent === true,
+    consentPending: state.consentPending === true,
     hasName: !!state.name,
     hasTreatmentArea: !!(state.treatmentArea || state.service),
     hasPreferredDateTime: !!(state.preferredDate || state.preferredTime),
@@ -90,6 +95,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 4. Run shared pipeline ───────────────────────────────────────────────
+  // KVKK consent gate: the pipeline returns a disclosure turn until the disclosure
+  // send is confirmed, and this endpoint is a dry run — it sends nothing at all, so
+  // no verdict would ever arrive and every call would return the same disclosure.
+  // Seed a delivered-disclosure record so the diagnostic keeps exercising the main
+  // flow. Safe: isLocalDevelopment() fails closed, so this never runs in production.
+  await recordConsentDisclosureResult(from, true);
+
   const result = await processInboundMessage({ from, body: rawInput });
 
   // ── 5. Redis diagnostics: write + read AFTER to verify persistence ────────

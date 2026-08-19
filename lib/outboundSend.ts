@@ -7,6 +7,7 @@ import {
 import type { ComplianceDecision, GateChannel, OutboundKind } from "./compliance";
 import { sendWhatsAppText } from "./metaWhatsApp";
 import { sendSms } from "./twilio";
+import { sanitizeSmsText } from "./sanitize";
 
 // ── The single mandatory outbound send path ───────────────────────────────────
 //
@@ -39,12 +40,33 @@ export interface OutboundResult {
   sent: boolean;
   decision: ComplianceDecision;
   error?: string;
+  /**
+   * True only when the transport put `msg.body` on the wire byte-for-byte. False
+   * whenever the send did not happen, and false when the channel rewrote the body
+   * (see transmitsBodyIntact). Callers whose message is legally load-bearing — the
+   * KVKK consent disclosure above all — MUST require `sent && bodyIntact` before
+   * recording it as delivered: a truncated notice is not a notice.
+   */
+  bodyIntact: boolean;
 }
 
 interface OutboundDeps {
   transport?: (to: string, body: string) => Promise<void>;
   now?: number;
   sleep?: (ms: number) => Promise<void>;
+}
+
+// Does this channel's transport transmit the body verbatim?
+//   meta   → the Cloud API carries `text.body` unchanged in the JSON payload.
+//   twilio → sendSms() runs sanitizeSmsText() first, which strips every non-GSM
+//            character (newlines and all Arabic/Cyrillic text included) and hard-caps
+//            the result at SMS_MAX_CHARS. Anything longer or non-Latin arrives altered.
+// Recomputing the sanitizer here is deliberate: it is a pure function, so this stays a
+// prediction of exactly what sendSms() will transmit. With an injected deps.transport
+// the verdict describes the real channel, not the stub.
+function transmitsBodyIntact(msg: OutboundMessage): boolean {
+  if (msg.channel === "meta") return true;
+  return sanitizeSmsText(msg.body) === msg.body;
 }
 
 function gateChannelFor(msg: OutboundMessage): GateChannel {
@@ -69,7 +91,7 @@ export async function sendOutbound(
     sleep: deps.sleep,
   });
   if (!gate.allowed) {
-    return { sent: false, decision: gate.decision };
+    return { sent: false, decision: gate.decision, bodyIntact: false };
   }
 
   const transport =
@@ -79,11 +101,11 @@ export async function sendOutbound(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Outbound] transport send failed (${msg.channel}):`, message);
-    return { sent: false, decision: gate.decision, error: message };
+    return { sent: false, decision: gate.decision, error: message, bodyIntact: false };
   }
 
   await recordActivity(tenantId);
-  return { sent: true, decision: gate.decision };
+  return { sent: true, decision: gate.decision, bodyIntact: transmitsBodyIntact(msg) };
 }
 
 /**
@@ -105,5 +127,5 @@ export async function sendTemplate(
     tenantId,
     detail: `template send refused — no approved templates configured (requested: ${templateName})`,
   });
-  return { sent: false, decision: "BLOCKED_WINDOW_CLOSED" };
+  return { sent: false, decision: "BLOCKED_WINDOW_CLOSED", bodyIntact: false };
 }

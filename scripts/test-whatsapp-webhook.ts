@@ -38,9 +38,28 @@ if (fs.existsSync(envFile)) {
 
 // ── Safe to import lib modules now ────────────────────────────────────────────
 import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest, deleteConversationState } from "../lib/conversationState";
-import { processInboundMessage } from "../lib/inboundPipeline";
+import {
+  processInboundMessage,
+  recordConsentDisclosureResult,
+} from "../lib/inboundPipeline";
 import { formatBookingLinkMessage, getBookingUrl } from "../lib/clinicConfig";
 import { handleBookingHandoff } from "../lib/bookingHandoff";
+
+// ── KVKK consent gate shim (lib/inboundPipeline) ──────────────────────────────
+// processInboundMessage() now returns a disclosure turn — no intent, no slots, no
+// Anthropic call — until the consent disclosure has been CONFIRMED sent, and only a
+// real route reports that verdict back. These scripts never send anything, so every
+// inbound below goes through this shim, which seeds a delivered-disclosure record
+// first. That keeps the first-message assertions testing the MAIN flow, exactly as
+// before the gate existed. Seeding per call (not just after resetStateForTest) is
+// deliberate: _setStateForTest() overwrites whole states and would drop the flags.
+async function inbound(
+  options: Parameters<typeof processInboundMessage>[0]
+): ReturnType<typeof processInboundMessage> {
+  await recordConsentDisclosureResult(options.from, true);
+  return processInboundMessage(options);
+}
+
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -141,7 +160,7 @@ async function main() {
   const PHONE_1 = "905551112400";
   await resetStateForTest(PHONE_1);
 
-  const r1 = await processInboundMessage({
+  const r1 = await inbound({
     from: PHONE_1,
     body: "Merhaba lazer epilasyon fiyatı alabilir miyim?",
     source: "whatsapp",
@@ -168,7 +187,7 @@ async function main() {
   await resetStateForTest(PHONE_MT);
 
   // Turn 1: service inquiry
-  const t1 = await processInboundMessage({
+  const t1 = await inbound({
     from: PHONE_MT,
     body: "Merhaba lazer epilasyon fiyatı alabilir miyim?",
     source: "whatsapp",
@@ -183,7 +202,7 @@ async function main() {
   await trySendWhatsApp(PHONE_MT, t1.assistantReply);
 
   // Turn 1b: answer the first-time qualification question (required before date/name).
-  const t1b = await processInboundMessage({
+  const t1b = await inbound({
     from: PHONE_MT,
     body: "Evet, ilk kez yaptıracağım.",
     source: "whatsapp",
@@ -193,7 +212,7 @@ async function main() {
   await trySendWhatsApp(PHONE_MT, t1b.assistantReply);
 
   // Turn 2: date and time
-  const t2 = await processInboundMessage({
+  const t2 = await inbound({
     from: PHONE_MT,
     body: "Tüm vücut için cumartesi öğleden sonra uygun olur.",
     source: "whatsapp",
@@ -207,7 +226,7 @@ async function main() {
   await trySendWhatsApp(PHONE_MT, t2.assistantReply);
 
   // Turn 3: name and phone
-  const t3 = await processInboundMessage({
+  const t3 = await inbound({
     from: PHONE_MT,
     body: "Adım Ayşe Yılmaz, telefonum 0532 123 45 67.",
     source: "whatsapp",
@@ -221,7 +240,7 @@ async function main() {
   await trySendWhatsApp(PHONE_MT, t3.assistantReply);
 
   // Turn 4: location → complete
-  const t4 = await processInboundMessage({
+  const t4 = await inbound({
     from: PHONE_MT,
     body: "Kadıköy şubesi uygun olur.",
     source: "whatsapp",
@@ -255,7 +274,7 @@ async function main() {
   await resetStateForTest(PHONE_6T);
 
   // Turn 1: service inquiry
-  const w1 = await processInboundMessage({
+  const w1 = await inbound({
     from: PHONE_6T,
     body: "Merhaba lazer epilasyon fiyatı alabilir miyim?",
     source: "whatsapp",
@@ -266,7 +285,7 @@ async function main() {
   assertEqual("W1: laser → gated at collect_qualification", w1.nextStage, "collect_qualification");
 
   // Turn 1b: answer the first-time qualification question so the flow can later complete.
-  const w1b = await processInboundMessage({
+  const w1b = await inbound({
     from: PHONE_6T,
     body: "İlk kez olacak.",
     source: "whatsapp",
@@ -274,7 +293,7 @@ async function main() {
   assertEqual("W1b: firstTimeLaser captured", w1b.stateAfter.firstTimeLaser, true);
 
   // Turn 2: single-word name (regression — was not extracted before this fix)
-  const w2 = await processInboundMessage({
+  const w2 = await inbound({
     from: PHONE_6T,
     body: "ayşe",
     source: "whatsapp",
@@ -285,7 +304,7 @@ async function main() {
   assertNotContains("W2: reply does not re-ask name (adınızı)", w2.assistantReply, "adınızı");
 
   // Turn 3: phone only
-  const w3 = await processInboundMessage({
+  const w3 = await inbound({
     from: PHONE_6T,
     body: "Telefonum 0532 123 45 67",
     source: "whatsapp",
@@ -296,7 +315,7 @@ async function main() {
   assertContains("W3: name still Ayşe", w3.stateAfter.name ?? "", "Ayşe");
 
   // Turn 4: service detail — must NOT overwrite name or service
-  const w4 = await processInboundMessage({
+  const w4 = await inbound({
     from: PHONE_6T,
     body: "Tüm vücut düşünüyorum",
     source: "whatsapp",
@@ -306,7 +325,7 @@ async function main() {
   assertContains("W4: service preserved", w4.stateAfter.service ?? "", "lazer epilasyon");
 
   // Turn 5: date and time
-  const w5 = await processInboundMessage({
+  const w5 = await inbound({
     from: PHONE_6T,
     body: "Cumartesi öğleden sonra uygun olur",
     source: "whatsapp",
@@ -318,7 +337,7 @@ async function main() {
   assertNotContains("W5: reply does not re-ask name", w5.assistantReply, "isminizi");
 
   // Turn 6: location → stage must reach complete; reply must NOT ask for name again
-  const w6 = await processInboundMessage({
+  const w6 = await inbound({
     from: PHONE_6T,
     body: "Kadıköy şubesi uygun olur.",
     source: "whatsapp",
@@ -385,7 +404,7 @@ async function main() {
   assertEqual("D4: sheetLoggedComplete = true after route simulation", statePostFlags.sheetLoggedComplete, true);
 
   // 5c. Follow-up message from same customer — flags must survive the next pipeline turn
-  const tFollowUp = await processInboundMessage({
+  const tFollowUp = await inbound({
     from: PHONE_MT,
     body: "Tamam, teşekkürler",
     source: "whatsapp",
@@ -421,7 +440,7 @@ async function main() {
     lastUpdated: Date.now(),
   });
 
-  const cfResult = await processInboundMessage({
+  const cfResult = await inbound({
     from: PHONE_CF,
     body: "Tüm vücut için randevu almak istiyorum",
     source: "whatsapp",
@@ -470,7 +489,7 @@ async function main() {
   for (const msg of batchMessages) {
     if (msg.type !== "text" || !msg.body) { batchSkipped++; continue; }
     try {
-      const res = await processInboundMessage({ from: msg.from, body: msg.body, source: "whatsapp" });
+      const res = await inbound({ from: msg.from, body: msg.body, source: "whatsapp" });
       console.log(`  Batch msg: stage=${res.stateAfter.stage} intent=${res.intent}`);
       batchProcessed++;
     } catch (err) {
@@ -500,7 +519,7 @@ async function main() {
   for (const msg of mixedMessages) {
     if (msg.type !== "text" || !msg.body) { mixedSkipped++; continue; }
     try {
-      const res = await processInboundMessage({ from: msg.from, body: msg.body, source: "whatsapp" });
+      const res = await inbound({ from: msg.from, body: msg.body, source: "whatsapp" });
       console.log(`  Mixed batch text msg: stage=${res.stateAfter.stage}`);
       mixedProcessed++;
     } catch {
@@ -527,7 +546,7 @@ async function main() {
   for (const msg of resilientMessages) {
     if (msg.type !== "text" || !msg.body) { resilientSkipped++; continue; }
     try {
-      const res = await processInboundMessage({ from: msg.from, body: msg.body, source: "whatsapp" });
+      const res = await inbound({ from: msg.from, body: msg.body, source: "whatsapp" });
       console.log(`  Resilient msg: from=${msg.from} stage=${res.stateAfter.stage}`);
       resilientProcessed++;
     } catch (err) {
@@ -558,7 +577,7 @@ async function main() {
     lastUpdated: Date.now(),
   });
 
-  const langResult = await processInboundMessage({
+  const langResult = await inbound({
     from: PHONE_LANG,
     body: "Merhaba, full body lazer fiyatı ne kadar?",
     source: "whatsapp",
@@ -631,7 +650,7 @@ async function main() {
   // ask the first-time question with safe pricing, and NOT request name/phone.
   const PHONE_LQ = "905551112430";
   await resetStateForTest(PHONE_LQ);
-  const lq1 = await processInboundMessage({
+  const lq1 = await inbound({
     from: PHONE_LQ,
     body: "Merhaba, full body lazer fiyatı ne kadar?",
     source: "whatsapp",
@@ -650,7 +669,7 @@ async function main() {
   // slot), still ask first-time, and NOT request name/phone. Stage stays collect_qualification.
   const PHONE_AV = "905551112433";
   await resetStateForTest(PHONE_AV);
-  const av1 = await processInboundMessage({
+  const av1 = await inbound({
     from: PHONE_AV,
     body: "Bu cumartesi öğleden sonra müsait misiniz? Full body lazer.",
     source: "whatsapp",
@@ -673,7 +692,7 @@ async function main() {
   // The EXACT required missing field is travellingFromAbroad.
   const PHONE_HQ = "905551112431";
   await resetStateForTest(PHONE_HQ);
-  const hq1 = await processInboundMessage({
+  const hq1 = await inbound({
     from: PHONE_HQ,
     body: "Hi, how much for around 3000 grafts?",
     source: "whatsapp",
@@ -688,7 +707,7 @@ async function main() {
   console.log(`  HQ1 stage=${hq1.stateAfter.stage} grafts=${hq1.stateAfter.estimatedGrafts} abroad=${hq1.stateAfter.travellingFromAbroad}`);
 
   // 10d. Hair transplant — travel origin answered → stage advances to collect_datetime (exact).
-  const hq2 = await processInboundMessage({
+  const hq2 = await inbound({
     from: PHONE_HQ,
     body: "Yes, I'm coming from abroad.",
     source: "whatsapp",
@@ -700,7 +719,7 @@ async function main() {
   // The EXACT required missing field is teethCountOrScope.
   const PHONE_DQ = "905551112432";
   await resetStateForTest(PHONE_DQ);
-  const dq1 = await processInboundMessage({
+  const dq1 = await inbound({
     from: PHONE_DQ,
     body: "Hi, how much are veneers in Istanbul?",
     source: "whatsapp",
@@ -715,7 +734,7 @@ async function main() {
   console.log(`  DQ1 stage=${dq1.stateAfter.stage} dental=${dq1.stateAfter.dentalTreatmentType} reply="${dq1.assistantReply.slice(0, 90)}"`);
 
   // 10f. Dental scope answered → stage advances to collect_datetime (exact).
-  const dq2 = await processInboundMessage({
+  const dq2 = await inbound({
     from: PHONE_DQ,
     body: "I'm considering a full smile design.",
     source: "whatsapp",
@@ -724,12 +743,12 @@ async function main() {
   assertEqual("DQ2: stage = collect_datetime (exact)", dq2.stateAfter.stage, "collect_datetime");
 
   // 10g. Dental flow completes with date then name+phone.
-  await processInboundMessage({
+  await inbound({
     from: PHONE_DQ,
     body: "Saturday morning works for me.",
     source: "whatsapp",
   });
-  const dq4 = await processInboundMessage({
+  const dq4 = await inbound({
     from: PHONE_DQ,
     body: "Sarah, +44 7700 900456",
     source: "whatsapp",
@@ -752,13 +771,13 @@ async function main() {
   // 11a. Turkish flow (the reported physical WhatsApp scenario) → Turkish completion + link.
   const PHONE_TRC = "905551112440";
   await resetStateForTest(PHONE_TRC);
-  await processInboundMessage({
+  await inbound({
     from: PHONE_TRC,
     body: "Merhaba, cumartesi öğleden sonra full body lazer için boş musunuz?",
     source: "whatsapp",
   });
-  await processInboundMessage({ from: PHONE_TRC, body: "Evet, ilk kez yaptıracağım.", source: "whatsapp" });
-  const trc = await processInboundMessage({ from: PHONE_TRC, body: "Zeynep, +44 7700 900123", source: "whatsapp" });
+  await inbound({ from: PHONE_TRC, body: "Evet, ilk kez yaptıracağım.", source: "whatsapp" });
+  const trc = await inbound({ from: PHONE_TRC, body: "Zeynep, +44 7700 900123", source: "whatsapp" });
 
   assertEqual("11a: stage = complete (exact)", trc.stateAfter.stage, "complete");
   assertContains("11a: name captured", trc.stateAfter.name ?? "", "Zeynep");
@@ -780,13 +799,13 @@ async function main() {
   // 11b. English flow → English completion + link (regression guard).
   const PHONE_ENC = "905551112441";
   await resetStateForTest(PHONE_ENC);
-  await processInboundMessage({
+  await inbound({
     from: PHONE_ENC,
     body: "Hi, is Saturday afternoon free for full body laser?",
     source: "whatsapp",
   });
-  await processInboundMessage({ from: PHONE_ENC, body: "Yes, it's my first time.", source: "whatsapp" });
-  const enc = await processInboundMessage({ from: PHONE_ENC, body: "Emma, +44 7700 900222", source: "whatsapp" });
+  await inbound({ from: PHONE_ENC, body: "Yes, it's my first time.", source: "whatsapp" });
+  const enc = await inbound({ from: PHONE_ENC, body: "Emma, +44 7700 900222", source: "whatsapp" });
 
   assertEqual("11b: stage = complete (exact)", enc.stateAfter.stage, "complete");
   assertEqual("11b: detectedLanguage = english", enc.stateAfter.detectedLanguage, "english");
@@ -820,7 +839,7 @@ async function main() {
     ],
     lastUpdated: Date.now(),
   });
-  const sw = await processInboundMessage({ from: PHONE_SW, body: "Saturday afternoon works, thanks.", source: "whatsapp" });
+  const sw = await inbound({ from: PHONE_SW, body: "Saturday afternoon works, thanks.", source: "whatsapp" });
 
   assertEqual("11c: stage = complete (exact)", sw.stateAfter.stage, "complete");
   assertEqual("11c: detectedLanguage switched to english on final turn", sw.stateAfter.detectedLanguage, "english");
@@ -861,7 +880,7 @@ async function main() {
   });
 
   // 12a. Ordinary follow-up: no completion repeat, no link resend condition, lead intact
-  const hd1 = await processInboundMessage({ from: PHONE_HD, body: "Teşekkürler, beklemedeyim.", source: "whatsapp" });
+  const hd1 = await inbound({ from: PHONE_HD, body: "Teşekkürler, beklemedeyim.", source: "whatsapp" });
   assertEqual("12a: stage stays complete", hd1.stateAfter.stage, "complete");
   assertEqual("12a: name intact", hd1.stateAfter.name, "Zeynep");
   assertEqual("12a: bookingLinkSent still true (route will not resend)", hd1.stateAfter.bookingLinkSent, true);
@@ -869,7 +888,7 @@ async function main() {
   console.log(`  12a reply="${hd1.assistantReply.slice(0, 80)}"`);
 
   // 12b. Instagram question post-completion: informational answer, no qualification
-  const hd2 = await processInboundMessage({ from: PHONE_HD, body: "Instagram'dan da yazabilir miyim?", source: "whatsapp" });
+  const hd2 = await inbound({ from: PHONE_HD, body: "Instagram'dan da yazabilir miyim?", source: "whatsapp" });
   assertContains("12b: Instagram redirect mentions WhatsApp", hd2.assistantReply, "WhatsApp");
   assertNotContains("12b: no first-time question", hd2.assistantReply, "ilk kez");
   assertEqual("12b: lead fields untouched", hd2.stateAfter.phone, "+447700900123");
@@ -877,7 +896,7 @@ async function main() {
   // 12c. Fresh conversation, device question first: answered without qualification
   const PHONE_HD2 = "905551112451";
   await resetStateForTest(PHONE_HD2);
-  const hd3 = await processInboundMessage({ from: PHONE_HD2, body: "Hangi lazer cihazını kullanıyorsunuz?", source: "whatsapp" });
+  const hd3 = await inbound({ from: PHONE_HD2, body: "Hangi lazer cihazını kullanıyorsunuz?", source: "whatsapp" });
   assertNotContains("12c: device question gets no first-time question", hd3.assistantReply, "ilk kez");
   assertNotContains("12c: device question gets no name request", hd3.assistantReply, "isminizi");
   console.log(`  12c reply="${hd3.assistantReply.slice(0, 80)}"`);
@@ -906,13 +925,13 @@ async function main() {
     // so we can assert the exact number and content of outbound messages.
     const driveTurkishCompletion = async (from: string) => {
       await resetStateForTest(from);
-      await processInboundMessage({
+      await inbound({
         from,
         body: "Merhaba, cumartesi öğleden sonra full body lazer için boş musunuz?",
         source: "whatsapp",
       });
-      await processInboundMessage({ from, body: "Evet, ilk kez yaptıracağım.", source: "whatsapp" });
-      return processInboundMessage({ from, body: "Zeynep, +44 7700 900123", source: "whatsapp" });
+      await inbound({ from, body: "Evet, ilk kez yaptıracağım.", source: "whatsapp" });
+      return inbound({ from, body: "Zeynep, +44 7700 900123", source: "whatsapp" });
     };
 
     // 13a. Configured URL + transition to complete + bookingLinkSent false → exactly two
@@ -947,7 +966,7 @@ async function main() {
     assertEqual("BH2: bookingLinkSent true after successful booking send", stateAfterHandoff.bookingLinkSent, true);
 
     // 13c. Post-completion follow-up must NOT resend the link (already_sent skip).
-    const followUp = await processInboundMessage({ from: PHONE_BH, body: "Teşekkürler", source: "whatsapp" });
+    const followUp = await inbound({ from: PHONE_BH, body: "Teşekkürler", source: "whatsapp" });
     const sent2: Array<{ to: string; body: string }> = [];
     const outcome2 = await handleBookingHandoff({
       from: PHONE_BH,
@@ -975,7 +994,7 @@ async function main() {
       ],
       lastUpdated: Date.now(),
     });
-    const deDone = await processInboundMessage({ from: PHONE_BH_DE, body: "Anna, +49 151 23456789", source: "whatsapp" });
+    const deDone = await inbound({ from: PHONE_BH_DE, body: "Anna, +49 151 23456789", source: "whatsapp" });
     assertEqual("BH4: DE reached complete", deDone.stateAfter.stage, "complete");
     const sentDe: Array<{ to: string; body: string }> = [];
     await handleBookingHandoff({
@@ -1083,7 +1102,7 @@ async function main() {
     await resetStateForTest(PHONE_DE_E2E);
 
     // Turn 1: German full-body laser price inquiry → laser category, gated at qualification.
-    const de1 = await processInboundMessage({
+    const de1 = await inbound({
       from: PHONE_DE_E2E,
       body: "Was kostet eine Ganzkörper-Laserbehandlung?",
       source: "whatsapp",
@@ -1095,7 +1114,7 @@ async function main() {
 
     // Turn 2: the patient answers the first-time question IN GERMAN.
     // Before the fix this did not set firstTimeLaser and the flow got permanently stuck.
-    const de2 = await processInboundMessage({
+    const de2 = await inbound({
       from: PHONE_DE_E2E,
       body: "Ja, das ist meine erste Laserbehandlung",
       source: "whatsapp",
@@ -1104,7 +1123,7 @@ async function main() {
     assertEqual("DE2: qualification answered → collect_datetime (exact)", de2.stateAfter.stage, "collect_datetime");
 
     // Turn 3: language-neutral time (14:00) advances past datetime.
-    const de3 = await processInboundMessage({
+    const de3 = await inbound({
       from: PHONE_DE_E2E,
       body: "Morgen um 14:00",
       source: "whatsapp",
@@ -1113,7 +1132,7 @@ async function main() {
     assertEqual("DE3: stage = collect_name (exact)", de3.stateAfter.stage, "collect_name");
 
     // Turn 4: name + phone → complete.
-    const de4 = await processInboundMessage({
+    const de4 = await inbound({
       from: PHONE_DE_E2E,
       body: "Anna, +49 151 23456789",
       source: "whatsapp",
@@ -1162,7 +1181,7 @@ async function main() {
     await resetStateForTest(PHONE_DE_HAIR);
 
     // Turn 1: German FUE hair-transplant price inquiry → hair_transplant, gated at qualification.
-    const dh1 = await processInboundMessage({
+    const dh1 = await inbound({
       from: PHONE_DE_HAIR,
       body: "Was kostet eine FUE Haartransplantation?",
       source: "whatsapp",
@@ -1174,7 +1193,7 @@ async function main() {
 
     // Turn 2: the patient answers the travel-origin question IN GERMAN.
     // Before the fix this did not set travellingFromAbroad and the flow got permanently stuck.
-    const dh2 = await processInboundMessage({
+    const dh2 = await inbound({
       from: PHONE_DE_HAIR,
       body: "Ich komme aus dem Ausland nach Istanbul.",
       source: "whatsapp",
@@ -1183,7 +1202,7 @@ async function main() {
     assertEqual("DH2: qualification answered → collect_datetime (exact)", dh2.stateAfter.stage, "collect_datetime");
 
     // Turn 3: language-neutral numeric date/time advances past datetime.
-    const dh3 = await processInboundMessage({
+    const dh3 = await inbound({
       from: PHONE_DE_HAIR,
       body: "Nächste Woche, am 20.07 um 10:00",
       source: "whatsapp",
@@ -1192,7 +1211,7 @@ async function main() {
     assertEqual("DH3: stage = collect_name (exact)", dh3.stateAfter.stage, "collect_name");
 
     // Turn 4: name + phone → complete.
-    const dh4 = await processInboundMessage({
+    const dh4 = await inbound({
       from: PHONE_DE_HAIR,
       body: "Anna, +49 151 23456789",
       source: "whatsapp",
@@ -1238,7 +1257,7 @@ async function main() {
     await resetStateForTest(PHONE_DE_DENTAL);
 
     // Turn 1: German veneer price inquiry → dental, gated at qualification.
-    const dd1 = await processInboundMessage({
+    const dd1 = await inbound({
       from: PHONE_DE_DENTAL,
       body: "Was kostet ein Veneer?",
       source: "whatsapp",
@@ -1250,7 +1269,7 @@ async function main() {
 
     // Turn 2: the patient answers the scope question IN GERMAN.
     // Before the fix "6 Zähne" was not extracted and the flow got permanently stuck.
-    const dd2 = await processInboundMessage({
+    const dd2 = await inbound({
       from: PHONE_DE_DENTAL,
       body: "Ich möchte 6 Zähne machen lassen.",
       source: "whatsapp",
@@ -1259,7 +1278,7 @@ async function main() {
     assertEqual("DD2: qualification answered → collect_datetime (exact)", dd2.stateAfter.stage, "collect_datetime");
 
     // Turn 3: language-neutral numeric date/time advances past datetime.
-    const dd3 = await processInboundMessage({
+    const dd3 = await inbound({
       from: PHONE_DE_DENTAL,
       body: "Am 21.07 um 11:00",
       source: "whatsapp",
@@ -1268,7 +1287,7 @@ async function main() {
     assertEqual("DD3: stage = collect_name (exact)", dd3.stateAfter.stage, "collect_name");
 
     // Turn 4: name + phone → complete.
-    const dd4 = await processInboundMessage({
+    const dd4 = await inbound({
       from: PHONE_DE_DENTAL,
       body: "Max, +49 160 1234567",
       source: "whatsapp",

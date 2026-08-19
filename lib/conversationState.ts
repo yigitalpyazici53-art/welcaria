@@ -36,11 +36,22 @@ export interface ConversationState {
   bookingLinkSent?: boolean;
   // When true, the bot stops auto-replying so a human owner can take over the thread.
   humanHandoff?: boolean;
-  // KVKK consent: set true once the AI-intake disclosure has been sent on the
-  // first turn of a conversation, so it is shown exactly once. consentTimestamp
-  // is the epoch-ms time of that disclosure (an auditable consent record).
+  // KVKK consent — LEGACY PAIR. These used to be stamped on the first inbound
+  // BEFORE the disclosure was actually sent, so a blocked or failed send still
+  // left a thread that looked like "consent recorded" (audit finding Y-3). They
+  // are still written, but ONLY after sendOutbound() confirmed sent:true, and
+  // they are read as the backward-compatible equivalent of consentDisclosureSent
+  // for threads created before that field existed (no migration needed).
   consentGiven?: boolean;
   consentTimestamp?: number;
+  // KVKK consent — DELIVERY RECORD. consentDisclosureSent is true only after the
+  // disclosure send was confirmed (sent:true); consentDisclosureAt is that send's
+  // epoch-ms. consentPending marks a thread where the disclosure was attempted but
+  // NOT confirmed (CIRCUIT_OPEN / RATE_LIMITED / transport error) — the next inbound
+  // turn retries the disclosure and the LLM stays gated off until it succeeds.
+  consentDisclosureSent?: boolean;
+  consentDisclosureAt?: number;
+  consentPending?: boolean;
   // Qualification fields
   serviceCategory?: ServiceCategory;
   travellingFromAbroad?: boolean;

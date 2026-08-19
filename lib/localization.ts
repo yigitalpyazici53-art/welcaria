@@ -399,9 +399,37 @@ export function fallbackText(kind: FallbackKind, language?: string): string {
 // greeting. Unlike the rest of this module, the default when no conversation
 // language has been detected is TURKISH (the clinic operates in Istanbul), not
 // English — an undetected-language first message is most likely Turkish.
-export function consentDisclosure(language?: string): string {
+function resolveConsentLanguage(language?: string): SupportedLanguage {
   const known = (SUPPORTED_LANGUAGES as readonly string[]).includes(language ?? "");
-  const lang: SupportedLanguage = known ? (language as SupportedLanguage) : "turkish";
+  return known ? (language as SupportedLanguage) : "turkish";
+}
+
+// Warm welcome that precedes the disclosure on the very first turn. The patient's
+// own message is NOT processed on that turn (no slot capture, no LLM), so this text
+// explicitly invites them to send their question next — the turn must feel like a
+// greeting, not a dead end.
+export function consentWelcome(language?: string): string {
+  switch (resolveConsentLanguage(language)) {
+    case "english":
+      return "Hello and welcome! I'm here to help you. Just a short notice first — after that, simply send your question and I will take care of it right away.";
+    case "german":
+      return "Hallo und herzlich willkommen! Ich helfe Ihnen gerne weiter. Zuerst ein kurzer Hinweis — danach schreiben Sie einfach Ihre Frage, ich kümmere mich sofort darum.";
+    case "arabic":
+      return "مرحبًا وأهلًا بكم! يسعدني مساعدتكم. أولًا تنويه قصير، وبعده يكفي أن ترسلوا سؤالكم وسأهتم به فورًا.";
+    case "russian":
+      return "Здравствуйте, добро пожаловать! Я с радостью вам помогу. Сначала короткое уведомление — после него просто напишите свой вопрос.";
+    case "french":
+      return "Bonjour et bienvenue ! Je suis là pour vous aider. D'abord une courte information — ensuite, écrivez simplement votre question et je m'en occupe tout de suite.";
+    case "spanish":
+      return "¡Hola y bienvenido! Estoy aquí para ayudarle. Primero un breve aviso y, después, solo tiene que escribir su pregunta: me ocupo de inmediato.";
+    case "turkish":
+    default:
+      return "Merhaba, hoş geldiniz! Size yardımcı olmak için buradayım. Önce kısa bir bilgilendirme yapayım, hemen ardından sorunuzu yazmanız yeterli.";
+  }
+}
+
+export function consentDisclosure(language?: string): string {
+  const lang = resolveConsentLanguage(language);
   switch (lang) {
     case "english":
       return "This line uses an AI-assisted patient intake system. By continuing, you consent to your data being processed for this purpose.";

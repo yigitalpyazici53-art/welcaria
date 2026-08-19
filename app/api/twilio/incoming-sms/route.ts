@@ -5,7 +5,10 @@ import { sendOutbound } from "@/lib/outboundSend";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
-import { processInboundMessage } from "@/lib/inboundPipeline";
+import {
+  processInboundMessage,
+  recordConsentDisclosureResult,
+} from "@/lib/inboundPipeline";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
 import { maskPhone } from "@/lib/sanitize";
 
@@ -127,9 +130,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     `[SMS] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
   );
 
-  // ── KVKK consent disclosure — first inbound only, before the reply ───────
-  // Sent once per conversation. kind "system" so it does not consume the bot's
+  // ── KVKK welcome + consent disclosure ────────────────────────────────────
+  // Sent while the thread has no confirmed disclosure (first inbound, or a retry
+  // after a blocked/failed attempt). kind "system" so it does not consume the bot's
   // per-inbound reply budget; pacing, rate limits, and the audit log still apply.
+  // The consent record is stamped from the send VERDICT only (audit finding Y-3):
+  // CIRCUIT_OPEN / RATE_LIMITED / transport error leaves the thread pending and the
+  // next inbound turn retries the disclosure.
   if (result.consentMessage) {
     const consentResult = await sendOutbound({
       to: from,
@@ -138,42 +145,60 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       channel: "twilio",
       threadKey: from,
     });
-    console.log(`[SMS] consent disclosure sent=${consentResult.sent} decision=${consentResult.decision}`);
+    // Fail-closed on partial delivery: the SMS transport caps at SMS_MAX_CHARS and
+    // drops non-GSM characters, so the disclosure can reach the patient truncated —
+    // a truncated notice is not a notice, and must not produce a consent record.
+    const disclosureDelivered = consentResult.sent && consentResult.bodyIntact;
+    await recordConsentDisclosureResult(from, disclosureDelivered);
+    if (consentResult.sent && !consentResult.bodyIntact) {
+      console.error(
+        "[SMS] consent disclosure was ALTERED by the SMS transport (truncated/charset-stripped) — consent NOT recorded, thread stays gated"
+      );
+    }
+    console.log(
+      `[SMS] consent disclosure sent=${consentResult.sent} intact=${consentResult.bodyIntact} recorded=${disclosureDelivered} decision=${consentResult.decision}`
+    );
   }
 
   // ── 5. Send reply to customer — through the mandatory compliance gate ────
   // (24h window + inbound-only apply when `from` is a whatsapp: recipient;
   // pacing, rate limits, and the audit log apply to every patient send.)
-  const replyResult = await sendOutbound({
-    to: from,
-    body: result.assistantReply,
-    kind: "bot_reply",
-    channel: "twilio",
-    threadKey: from,
-  });
-  console.log(`[SMS] reply sent=${replyResult.sent} decision=${replyResult.decision}`);
+  // On a disclosure turn there is no reply to send: the pipeline produced none, and
+  // the patient's message is only processed once they have been informed.
+  if (result.awaitingConsent) {
+    console.log("[SMS] awaiting consent disclosure — bot reply and booking handoff skipped");
+  } else {
+    const replyResult = await sendOutbound({
+      to: from,
+      body: result.assistantReply,
+      kind: "bot_reply",
+      channel: "twilio",
+      threadKey: from,
+    });
+    console.log(`[SMS] reply sent=${replyResult.sent} decision=${replyResult.decision}`);
 
-  // ── 6. Booking link handoff ──────────────────────────────────────────────
-  // Runtime booking-URL read + skip/attempt/sent decision live in the shared handler
-  // so this channel and the Meta webhook stay in lockstep. `from` retains any
-  // "whatsapp:" prefix so the follow-up reaches WhatsApp when Twilio delivered it there.
-  // The injected sender throws when the gate blocks or the transport fails, so
-  // bookingLinkSent stays false and a later turn retries.
-  await handleBookingHandoff({
-    from,
-    stateAfter: result.stateAfter,
-    channel: "twilio",
-    send: async (to, sendBody) => {
-      const r = await sendOutbound({
-        to,
-        body: sendBody,
-        kind: "booking_handoff",
-        channel: "twilio",
-        threadKey: from,
-      });
-      if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
-    },
-  });
+    // ── 6. Booking link handoff ────────────────────────────────────────────
+    // Runtime booking-URL read + skip/attempt/sent decision live in the shared handler
+    // so this channel and the Meta webhook stay in lockstep. `from` retains any
+    // "whatsapp:" prefix so the follow-up reaches WhatsApp when Twilio delivered it there.
+    // The injected sender throws when the gate blocks or the transport fails, so
+    // bookingLinkSent stays false and a later turn retries.
+    await handleBookingHandoff({
+      from,
+      stateAfter: result.stateAfter,
+      channel: "twilio",
+      send: async (to, sendBody) => {
+        const r = await sendOutbound({
+          to,
+          body: sendBody,
+          kind: "booking_handoff",
+          channel: "twilio",
+          threadKey: from,
+        });
+        if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
+      },
+    });
+  }
 
   // ── 7. Owner notification ────────────────────────────────────────────────
   if (result.shouldNotifyOwner) {
@@ -200,7 +225,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     `[SMS] sheets decision stage=${sheetsStage} sheetLoggedComplete=${sheetLoggedComplete}`
   );
 
-  if (sheetsStage !== "complete") {
+  // Google Sheets is a Google/US destination: no patient row may leave while the
+  // disclosure is unconfirmed. Only reachable for a legacy thread that already had
+  // captured data before the consent flow existed; a fresh thread is never complete
+  // on a disclosure turn.
+  if (result.awaitingConsent) {
+    console.log("[SMS] sheets skipped reason=awaiting_consent");
+  } else if (sheetsStage !== "complete") {
     console.log("[SMS] sheets skipped reason=not_complete");
   } else if (sheetLoggedComplete) {
     console.log("[SMS] sheets skipped reason=already_logged");

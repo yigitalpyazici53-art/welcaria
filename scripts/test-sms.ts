@@ -49,7 +49,10 @@ import {
   type ConversationState,
 } from "../lib/conversationState";
 import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage, detectMessageLanguageConfident, extractNameFallback, isInformationalOnlyMessage } from "../lib/slotExtractor";
-import { processInboundMessage } from "../lib/inboundPipeline";
+import {
+  processInboundMessage,
+  recordConsentDisclosureResult,
+} from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
 import { clinicConfig, formatBookingLinkMessage, getBookingUrl } from "../lib/clinicConfig";
@@ -64,6 +67,22 @@ import {
   completionReply,
   type FallbackKind,
 } from "../lib/localization";
+
+// ── KVKK consent gate shim (lib/inboundPipeline) ──────────────────────────────
+// processInboundMessage() now returns a disclosure turn — no intent, no slots, no
+// Anthropic call — until the consent disclosure has been CONFIRMED sent, and only a
+// real route reports that verdict back. These scripts never send anything, so every
+// inbound below goes through this shim, which seeds a delivered-disclosure record
+// first. That keeps the first-message assertions testing the MAIN flow, exactly as
+// before the gate existed. Seeding per call (not just after resetStateForTest) is
+// deliberate: _setStateForTest() overwrites whole states and would drop the flags.
+async function inbound(
+  options: Parameters<typeof processInboundMessage>[0]
+): ReturnType<typeof processInboundMessage> {
+  await recordConsentDisclosureResult(options.from, true);
+  return processInboundMessage(options);
+}
+
 
 const TEST_FROM = "+905000000000";
 
@@ -777,7 +796,7 @@ async function testCompleteStageReply(): Promise<void> {
   });
 
   // Send name + international phone — pipeline should reach complete and return deterministic reply
-  const result = await processInboundMessage({ from: phone, body: "Zeynep, +44 7700 900123" });
+  const result = await inbound({ from: phone, body: "Zeynep, +44 7700 900123" });
   const reply = result.assistantReply;
 
   console.log(`  Stage: ${result.stateAfter.stage}`);
@@ -843,7 +862,7 @@ async function testNameOverwriteProtection(): Promise<void> {
     ],
     lastUpdated: Date.now(),
   });
-  const r1 = await processInboundMessage({ from: phone1, body: "gelmedi bir şey" });
+  const r1 = await inbound({ from: phone1, body: "gelmedi bir şey" });
   assertEqual("name still Zeynep after 'gelmedi bir şey'", r1.stateAfter.name, "Zeynep");
   assertNotContains("reply never addresses 'Gelmedi'", r1.assistantReply, "Gelmedi");
 
@@ -865,7 +884,7 @@ async function testNameOverwriteProtection(): Promise<void> {
     ],
     lastUpdated: Date.now(),
   });
-  const r2a = await processInboundMessage({ from: phone2, body: "Zeynep, +44 7700 900123" });
+  const r2a = await inbound({ from: phone2, body: "Zeynep, +44 7700 900123" });
   assertEqual("stage=complete after name+phone", r2a.stateAfter.stage, "complete");
   assertEqual("name captured as Zeynep", r2a.stateAfter.name, "Zeynep");
   assertContains("completion reply addresses Zeynep once", r2a.assistantReply, "Zeynep");
@@ -875,7 +894,7 @@ async function testNameOverwriteProtection(): Promise<void> {
   const savedKeyPost = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
 
-  const r2b = await processInboundMessage({ from: phone2, body: "gelmedi bir şey" });
+  const r2b = await inbound({ from: phone2, body: "gelmedi bir şey" });
   assertEqual("name still Zeynep after post-completion status message", r2b.stateAfter.name, "Zeynep");
   assertNotContains("post-completion reply never says 'Gelmedi'", r2b.assistantReply, "Gelmedi");
   // Completed-state behavior: the full completion message is NOT repeated on follow-ups.
@@ -884,7 +903,7 @@ async function testNameOverwriteProtection(): Promise<void> {
   assertContains("post-completion reply is the short team ack", r2b.assistantReply, "Ekibimiz");
 
   // -- Pipeline: explicit Turkish correction still updates a captured name
-  const r2c = await processInboundMessage({ from: phone2, body: "Adım Zeynep değil, Ayşe." });
+  const r2c = await inbound({ from: phone2, body: "Adım Zeynep değil, Ayşe." });
   assertEqual("TR correction updates name to Ayşe", r2c.stateAfter.name, "Ayşe");
   assertContains("reply addresses corrected name Ayşe", r2c.assistantReply, "Ayşe");
 
@@ -910,7 +929,7 @@ async function testNameOverwriteProtection(): Promise<void> {
   });
   const savedKeyPost3 = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
-  const r3 = await processInboundMessage({ from: phone3, body: "My name is Sarah, not Zeynep." });
+  const r3 = await inbound({ from: phone3, body: "My name is Sarah, not Zeynep." });
   if (savedKeyPost3 !== undefined) process.env.ANTHROPIC_API_KEY = savedKeyPost3;
   assertEqual("EN correction updates name to Sarah", r3.stateAfter.name, "Sarah");
   assertContains("reply addresses corrected name Sarah", r3.assistantReply, "Sarah");
@@ -925,7 +944,7 @@ async function testHistoryLogging(): Promise<void> {
   const phone1 = "+905000000083";
   await resetState(phone1);
 
-  const r1 = await processInboundMessage({
+  const r1 = await inbound({
     from: phone1,
     body: "Merhaba lazer epilasyon fiyatı alabilir miyim?",
   });
@@ -955,7 +974,7 @@ async function testHistoryLogging(): Promise<void> {
     lastUpdated: Date.now(),
   });
 
-  const r2 = await processInboundMessage({
+  const r2 = await inbound({
     from: phone2,
     body: "Tüm vücut için randevu almak istiyorum",
   });
@@ -985,9 +1004,9 @@ async function testHistoryLogging(): Promise<void> {
   const phone3 = "+905000000085";
   await resetState(phone3);
 
-  await processInboundMessage({ from: phone3, body: "lazer epilasyon" });
-  await processInboundMessage({ from: phone3, body: "cumartesi öğleden sonra" });
-  await processInboundMessage({ from: phone3, body: "Adım Zeynep" });
+  await inbound({ from: phone3, body: "lazer epilasyon" });
+  await inbound({ from: phone3, body: "cumartesi öğleden sonra" });
+  await inbound({ from: phone3, body: "Adım Zeynep" });
 
   const state3 = await getState(phone3);
   const hist3 = state3.history;
@@ -1079,7 +1098,7 @@ async function testLegacyStateMigration(): Promise<void> {
     history: [],
     lastUpdated: Date.now(),
   } as ConversationState);
-  const pipelineResult = await processInboundMessage({ from: phone5, body: "cumartesi öğleden sonra uygun olur" });
+  const pipelineResult = await inbound({ from: phone5, body: "cumartesi öğleden sonra uygun olur" });
   if (pipelineResult.stateAfter.stage === "collect_name" || pipelineResult.stateAfter.stage === "complete") {
     pass("legacy state does not get stuck — pipeline continues normally", pipelineResult.stateAfter.stage);
   } else {
@@ -1372,7 +1391,7 @@ async function testQualificationFlows(): Promise<void> {
     lastUpdated: Date.now(),
   });
 
-  const htResult = await processInboundMessage({
+  const htResult = await inbound({
     from: phoneHT,
     body: "Yes, I'll be travelling from the UK.",
   });
@@ -1494,7 +1513,7 @@ async function testAnthropicModelConfig(): Promise<void> {
   const savedKey4 = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
 
-  const result4 = await processInboundMessage({ from: phone4, body: "Merhaba lazer epilasyon fiyatı?" });
+  const result4 = await inbound({ from: phone4, body: "Merhaba lazer epilasyon fiyatı?" });
   const fallbackReply = result4.assistantReply;
 
   if (savedKey4 !== undefined) process.env.ANTHROPIC_API_KEY = savedKey4;
@@ -1593,7 +1612,7 @@ async function testClinicConfigNormalization(): Promise<void> {
   // Send a message that contains only a treatment area, not an explicit service keyword.
   // The pipeline should normalize service to clinicConfig.primaryService.
   // "tüm vücut için randevu" → treatmentArea extracted, service falls back to config.
-  const result = await processInboundMessage({
+  const result = await inbound({
     from: phone,
     body: "tüm vücut için randevu almak istiyorum",
   });
@@ -1762,7 +1781,7 @@ async function testLanguageConsistency(): Promise<void> {
       ],
       lastUpdated: Date.now(),
     });
-    const resultF = await processInboundMessage({
+    const resultF = await inbound({
       from: phoneF,
       body: "Merhaba, full body lazer fiyatı ne kadar?",
     });
@@ -1785,7 +1804,7 @@ async function testLanguageConsistency(): Promise<void> {
       ],
       lastUpdated: Date.now(),
     });
-    const resultG = await processInboundMessage({
+    const resultG = await inbound({
       from: phoneG,
       body: "Full body laser hair removal — Saturday afternoon works for me.",
     });
@@ -2025,7 +2044,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     // 1. Turkish laser price inquiry → exact configured price + first-time question
     const PHONE_TR = "+905000001081";
     await resetState(PHONE_TR);
-    const tr = await processInboundMessage({ from: PHONE_TR, body: "Merhaba, full body lazer fiyatı ne kadar?" });
+    const tr = await inbound({ from: PHONE_TR, body: "Merhaba, full body lazer fiyatı ne kadar?" });
     assertContains("fallback TR laser: exact configured price", tr.assistantReply, "2.500 TL");
     assertContains("fallback TR laser: natural Turkish suffix (TL'den)", tr.assistantReply, "2.500 TL'den");
     assertContains("fallback TR laser: natural Turkish wording", tr.assistantReply, "başlamaktadır");
@@ -2040,7 +2059,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     // 2. English laser price inquiry → same behavior
     const PHONE_EN = "+905000001082";
     await resetState(PHONE_EN);
-    const en = await processInboundMessage({ from: PHONE_EN, body: "Hi, how much is full body laser hair removal?" });
+    const en = await inbound({ from: PHONE_EN, body: "Hi, how much is full body laser hair removal?" });
     assertContains("fallback EN laser: exact configured price", en.assistantReply, "2.500 TL");
     assertContains("fallback EN laser: natural 'starts from' wording", en.assistantReply, "starts from 2.500 TL");
     assertContains("fallback EN laser: asks first-time question", en.assistantReply, "first laser treatment");
@@ -2049,13 +2068,13 @@ async function testConfiguredStartingPrices(): Promise<void> {
     // 3. Hair transplant: own price only; price NOT repeated on the next turn
     const PHONE_HT = "+905000001083";
     await resetState(PHONE_HT);
-    const ht1 = await processInboundMessage({ from: PHONE_HT, body: "Merhaba saç ekimi fiyatı ne kadar?" });
+    const ht1 = await inbound({ from: PHONE_HT, body: "Merhaba saç ekimi fiyatı ne kadar?" });
     assertContains("fallback HT: exact configured price", ht1.assistantReply, "40.000 TL");
     assertContains("fallback HT: asks graft question in Turkish", ht1.assistantReply, "greft");
     assertNotContains("fallback HT: no laser price leak", ht1.assistantReply, "2.500 TL");
     assertSms("fallback HT: SMS-safe", ht1.assistantReply);
 
-    const ht2 = await processInboundMessage({ from: PHONE_HT, body: "Around 3000 grafts" });
+    const ht2 = await inbound({ from: PHONE_HT, body: "Around 3000 grafts" });
     assertEqual("fallback HT turn 2: grafts captured", ht2.stateAfter.estimatedGrafts, 3000);
     assertNotContains("fallback HT turn 2: price NOT repeated", ht2.assistantReply, "40.000 TL");
     assertContains("fallback HT turn 2: asks travel question", ht2.assistantReply, "travelling");
@@ -2063,7 +2082,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     // 4. Dental: own price only
     const PHONE_DN = "+905000001084";
     await resetState(PHONE_DN);
-    const dn = await processInboundMessage({ from: PHONE_DN, body: "Hi, how much are veneers in Istanbul?" });
+    const dn = await inbound({ from: PHONE_DN, body: "Hi, how much are veneers in Istanbul?" });
     assertContains("fallback dental: exact configured price", dn.assistantReply, "10.000 TL");
     assertContains("fallback dental: asks scope question", dn.assistantReply, "smile design");
     assertNotContains("fallback dental: no laser price leak", dn.assistantReply, "2.500 TL");
@@ -2073,7 +2092,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     // 5. Price NOT mentioned when the patient did not ask
     const PHONE_NOASK = "+905000001085";
     await resetState(PHONE_NOASK);
-    const noAsk = await processInboundMessage({ from: PHONE_NOASK, body: "Merhaba, full body lazer için randevu almak istiyorum" });
+    const noAsk = await inbound({ from: PHONE_NOASK, body: "Merhaba, full body lazer için randevu almak istiyorum" });
     assertNotContains("fallback no-ask: price not mentioned proactively", noAsk.assistantReply, "2.500 TL");
     assertContains("fallback no-ask: still asks first-time question in Turkish", noAsk.assistantReply, "ilk kez");
 
@@ -2081,7 +2100,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     clinicConfig.startingPrices.laser = "";
     const PHONE_EMPTY = "+905000001086";
     await resetState(PHONE_EMPTY);
-    const empty = await processInboundMessage({ from: PHONE_EMPTY, body: "Merhaba, full body lazer fiyatı ne kadar?" });
+    const empty = await inbound({ from: PHONE_EMPTY, body: "Merhaba, full body lazer fiyatı ne kadar?" });
     assertContains("fallback empty laser config: Turkish safe pricing response", empty.assistantReply, "Fiyat bilgisi");
     assertNotContains("fallback empty laser config: no stale price", empty.assistantReply, "2.500 TL");
     assertNotContains("fallback empty laser config: no other vertical price", empty.assistantReply, "40.000 TL");
@@ -2193,14 +2212,14 @@ async function testQualificationIntentGating(): Promise<void> {
     // 7. Device inquiry (real-world Turkish phrasing) → answer only
     const PH_DEV = "+905000002001";
     await resetState(PH_DEV);
-    const dev = await processInboundMessage({ from: PH_DEV, body: "Hangi lazer cihazını kullanıyorsunuz?" });
+    const dev = await inbound({ from: PH_DEV, body: "Hangi lazer cihazını kullanıyorsunuz?" });
     assertContains("device: configured brands verbatim", dev.assistantReply, "Candela GentleMax Pro, Soprano Ice");
     noQualification("device", dev.assistantReply);
 
     // 8. Location inquiry → address + plain "Google Maps: <url>", no qualification
     const PH_LOC = "+905000002002";
     await resetState(PH_LOC);
-    const loc = await processInboundMessage({ from: PH_LOC, body: "Adresiniz nerede acaba?" });
+    const loc = await inbound({ from: PH_LOC, body: "Adresiniz nerede acaba?" });
     assertContains("location: address verbatim", loc.assistantReply, "Nisantasi Ornek Sk. No:12");
     assertContains("location: plain Google Maps link", loc.assistantReply, "Google Maps: https://maps.app.goo.gl/demo123");
     assertNotContains("location: no markdown link", loc.assistantReply, "](");
@@ -2209,21 +2228,21 @@ async function testQualificationIntentGating(): Promise<void> {
     // 9. Airport transfer inquiry → configured note verbatim, no qualification
     const PH_TRF = "+905000002003";
     await resetState(PH_TRF);
-    const trf = await processInboundMessage({ from: PH_TRF, body: "Havalimanından transfer hizmetiniz var mı?" });
+    const trf = await inbound({ from: PH_TRF, body: "Havalimanından transfer hizmetiniz var mı?" });
     assertContains("transfer: configured note verbatim", trf.assistantReply, "IST havalimanindan VIP transfer imkani mevcuttur.");
     noQualification("transfer", trf.assistantReply);
 
     // 10. Instagram channel inquiry → WhatsApp redirect, no qualification
     const PH_IG = "+905000002004";
     await resetState(PH_IG);
-    const ig = await processInboundMessage({ from: PH_IG, body: "Size Instagram'dan da yazabilir miyim?" });
+    const ig = await inbound({ from: PH_IG, body: "Size Instagram'dan da yazabilir miyim?" });
     assertContains("instagram: redirects to WhatsApp", ig.assistantReply, "WhatsApp");
     noQualification("instagram", ig.assistantReply);
 
     // Pre-treatment inquiry OUTSIDE an active flow → natural sentences, no forcing
     const PH_PRE = "+905000002005";
     await resetState(PH_PRE);
-    const pre = await processInboundMessage({ from: PH_PRE, body: "Lazer öncesi nasıl hazırlanmalıyım?" });
+    const pre = await inbound({ from: PH_PRE, body: "Lazer öncesi nasıl hazırlanmalıyım?" });
     assertContains("pre-treatment: configured note verbatim", pre.assistantReply, "deodorant, krem, parfüm veya yağ sürülmemesi önerilir");
     assertContains("pre-treatment: team-will-confirm closer", pre.assistantReply, "ziyaretinizden önce");
     assertNotContains("pre-treatment: no bullet artifacts", pre.assistantReply, "- ");
@@ -2244,27 +2263,27 @@ async function testQualificationIntentGating(): Promise<void> {
       ],
       lastUpdated: Date.now(),
     });
-    const mid = await processInboundMessage({ from: PH_MID, body: "İşlem öncesi nasıl hazırlanmalıyım?" });
+    const mid = await inbound({ from: PH_MID, body: "İşlem öncesi nasıl hazırlanmalıyım?" });
     assertContains("mid-flow pre-treatment: qualification continues", mid.assistantReply, "ilk kez");
 
     // 5+12. Price inquiry still qualifies
     const PH_PRICE = "+905000002007";
     await resetState(PH_PRICE);
-    const price = await processInboundMessage({ from: PH_PRICE, body: "Full body lazer fiyatı ne kadar?" });
+    const price = await inbound({ from: PH_PRICE, body: "Full body lazer fiyatı ne kadar?" });
     assertContains("price intent: asks first-time question", price.assistantReply, "ilk kez");
     assertEqual("price intent: stage = collect_qualification", price.stateAfter.stage, "collect_qualification");
 
     // 6. Availability inquiry still qualifies (with availability acknowledgment)
     const PH_AV = "+905000002008";
     await resetState(PH_AV);
-    const av = await processInboundMessage({ from: PH_AV, body: "Cumartesi öğleden sonra müsait misiniz? Full body lazer için." });
+    const av = await inbound({ from: PH_AV, body: "Cumartesi öğleden sonra müsait misiniz? Full body lazer için." });
     assertContains("availability intent: team-will-check ack", av.assistantReply, "uygunluğu kontrol");
     assertContains("availability intent: asks first-time question", av.assistantReply, "ilk kez");
 
     // 12b. Explicit treatment wish still qualifies
     const PH_INT = "+905000002009";
     await resetState(PH_INT);
-    const intent = await processInboundMessage({ from: PH_INT, body: "Bacak lazer yaptırmak istiyorum." });
+    const intent = await inbound({ from: PH_INT, body: "Bacak lazer yaptırmak istiyorum." });
     assertEqual("treatment wish: stage = collect_qualification", intent.stateAfter.stage, "collect_qualification");
     assertContains("treatment wish: asks first-time question", intent.assistantReply, "ilk kez");
 
@@ -2342,7 +2361,7 @@ async function testMultilingualStaticFallbacks(): Promise<void> {
     for (const c of cases) {
       const phone = `+90500000${phoneSeq++}`;
       await resetState(phone);
-      const r = await processInboundMessage({ from: phone, body: c.body });
+      const r = await inbound({ from: phone, body: c.body });
       assertEqual(`${c.lang}: detectedLanguage`, r.stateAfter.detectedLanguage, c.lang);
       for (const needle of c.expect) {
         assertContains(`${c.lang}: fallback reply has "${needle}"`, r.assistantReply, needle);
@@ -2368,7 +2387,7 @@ async function testMultilingualStaticFallbacks(): Promise<void> {
       ],
       lastUpdated: Date.now(),
     });
-    const de = await processInboundMessage({ from: PH_DE, body: "Anna, +49 151 23456789" });
+    const de = await inbound({ from: PH_DE, body: "Anna, +49 151 23456789" });
     assertEqual("DE neutral turn: stage complete", de.stateAfter.stage, "complete");
     assertEqual("DE neutral turn: language stays german", de.stateAfter.detectedLanguage, "german");
     assertContains("DE completion is German", de.assistantReply, "Vielen Dank Anna");
@@ -2441,7 +2460,7 @@ async function testVerticalIsolationHardening(): Promise<void> {
     // 21. Static pre-treatment reply uses only the active vertical's note
     const PH_ISO = "+905000002201";
     await resetState(PH_ISO);
-    const iso = await processInboundMessage({ from: PH_ISO, body: "What should I do before my laser session?" });
+    const iso = await inbound({ from: PH_ISO, body: "What should I do before my laser session?" });
     assertContains("static prep: laser note only", iso.assistantReply, "LAZER-HAZIRLIK");
     assertNotContains("static prep: no HT leakage", iso.assistantReply, "SACEKIMI-HAZIRLIK");
     assertNotContains("static prep: no dental leakage", iso.assistantReply, "DENTAL-HAZIRLIK");
@@ -2487,7 +2506,7 @@ async function testCompletedStateBehavior(): Promise<void> {
     });
 
     // 22a. Completion message is sent exactly once — on the completing turn
-    const done = await processInboundMessage({ from: PH, body: "Zeynep, +44 7700 900123" });
+    const done = await inbound({ from: PH, body: "Zeynep, +44 7700 900123" });
     assertEqual("completion: stage complete", done.stateAfter.stage, "complete");
     assertContains("completion: full message on transition", done.assistantReply, "randevu talebinizi aldık");
     assertContains("completion: addresses Zeynep", done.assistantReply, "Zeynep");
@@ -2496,19 +2515,19 @@ async function testCompletedStateBehavior(): Promise<void> {
     await updateState(PH, { bookingLinkSent: true });
 
     // 22b/23. Follow-up thanks: no repeated completion, no link resend, no name corruption
-    const thanks = await processInboundMessage({ from: PH, body: "Teşekkürler, bilginiz için." });
+    const thanks = await inbound({ from: PH, body: "Teşekkürler, bilginiz için." });
     assertEqual("follow-up: name intact", thanks.stateAfter.name, "Zeynep");
     assertEqual("follow-up: bookingLinkSent flag intact (link not resent)", thanks.stateAfter.bookingLinkSent, true);
     assertNotContains("follow-up: completion NOT repeated", thanks.assistantReply, "randevu talebinizi aldık");
     assertContains("follow-up: short team acknowledgment", thanks.assistantReply, "Ekibimiz");
 
     // 23b. Status message never overwrites the captured name
-    const status = await processInboundMessage({ from: PH, body: "gelmedi bir şey" });
+    const status = await inbound({ from: PH, body: "gelmedi bir şey" });
     assertEqual("status msg: name still Zeynep", status.stateAfter.name, "Zeynep");
     assertNotContains("status msg: never addressed as Gelmedi", status.assistantReply, "Gelmedi");
 
     // 24. Real question after completion is answered; lead data preserved
-    const q = await processInboundMessage({ from: PH, body: "Adresiniz nerede?" });
+    const q = await inbound({ from: PH, body: "Adresiniz nerede?" });
     assertContains("post-completion question: address answered", q.assistantReply, "Nisantasi Ornek Sk. No:12");
     assertContains("post-completion question: plain maps link", q.assistantReply, "Google Maps: https://maps.app.goo.gl/demo123");
     assertEqual("post-completion question: name preserved", q.stateAfter.name, "Zeynep");
@@ -2517,7 +2536,7 @@ async function testCompletedStateBehavior(): Promise<void> {
     assertNotContains("post-completion question: completion NOT repeated", q.assistantReply, "randevu talebinizi aldık");
 
     // New treatment inquiry reopens qualification WITHOUT corrupting contact data
-    const newInquiry = await processInboundMessage({ from: PH, body: "Peki saç ekimi fiyatı ne kadar?" });
+    const newInquiry = await inbound({ from: PH, body: "Peki saç ekimi fiyatı ne kadar?" });
     assertEqual("new inquiry: reopens qualification", newInquiry.stateAfter.stage, "collect_qualification");
     assertEqual("new inquiry: serviceCategory switches", newInquiry.stateAfter.serviceCategory, "hair_transplant");
     assertEqual("new inquiry: name preserved", newInquiry.stateAfter.name, "Zeynep");
@@ -2601,7 +2620,7 @@ async function testFullBodyMultilingualExtraction(): Promise<void> {
     for (const c of cases) {
       const phone = `+90500000${seq++}`;
       await resetState(phone);
-      const r = await processInboundMessage({ from: phone, body: c.body });
+      const r = await inbound({ from: phone, body: c.body });
       assertEqual(`${c.lang} full-body inquiry: treatmentArea = full body`, r.stateAfter.treatmentArea, "full body");
       assertEqual(`${c.lang} full-body inquiry: detectedLanguage`, r.stateAfter.detectedLanguage, c.lang);
       assertEqual(`${c.lang} full-body inquiry: advances to first-time (collect_qualification)`, r.stateAfter.stage, "collect_qualification");
@@ -2722,7 +2741,7 @@ async function testExactPricePreservation(): Promise<void> {
     for (const [lang, body] of inquiries) {
       const phone = `+90500000${seq++}`;
       await resetState(phone);
-      const r = await processInboundMessage({ from: phone, body });
+      const r = await inbound({ from: phone, body });
       const reply = r.assistantReply;
       const occurrences = reply.split("₺2.500").length - 1;
       assertEqual(`${lang}: reply contains "₺2.500" exactly once`, occurrences, 1);
@@ -2826,7 +2845,7 @@ async function testBookingHandoffTwilio(): Promise<void> {
       ],
       lastUpdated: Date.now(),
     });
-    const complete = await processInboundMessage({ from: phone, body: "Zeynep, +44 7700 900123", source: "sms" });
+    const complete = await inbound({ from: phone, body: "Zeynep, +44 7700 900123", source: "sms" });
     assertEqual("BH-SMS 1: reached complete", complete.stateAfter.stage, "complete");
     assertEqual("BH-SMS 1: bookingLinkSent false before handoff", Boolean(complete.stateAfter.bookingLinkSent), false);
 

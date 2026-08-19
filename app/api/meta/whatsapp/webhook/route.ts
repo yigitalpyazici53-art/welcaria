@@ -1,6 +1,9 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { processInboundMessage } from "@/lib/inboundPipeline";
+import {
+  processInboundMessage,
+  recordConsentDisclosureResult,
+} from "@/lib/inboundPipeline";
 import { sendOutbound } from "@/lib/outboundSend";
 import { handleAccountLevelWebhook } from "@/lib/compliance";
 import { notifyOwner } from "@/lib/twilio";
@@ -204,10 +207,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             `[WhatsApp Webhook] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
           );
 
-          // KVKK consent disclosure — sent once, on the first inbound of a new
-          // conversation, BEFORE the assistant reply. kind "system" so it is not
-          // counted against the bot's per-inbound reply budget; the 24h window,
-          // inbound-only guarantee, and circuit breaker still apply.
+          // KVKK welcome + consent disclosure — sent while the thread has no
+          // CONFIRMED disclosure (first inbound, or a retry after a blocked/failed
+          // attempt). kind "system" so it is not counted against the bot's
+          // per-inbound reply budget; the 24h window, inbound-only guarantee, and
+          // circuit breaker still apply. The consent record is stamped from the send
+          // VERDICT only (audit finding Y-3) — a blocked or failed send leaves the
+          // thread pending, and the next inbound turn retries the disclosure instead
+          // of claiming consent that the patient never received.
           if (result.consentMessage) {
             const consentResult = await sendOutbound({
               to: from,
@@ -217,8 +224,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               tenantId,
               threadKey: from,
             });
+            // Fail-closed on partial delivery. The Cloud API carries the body
+            // verbatim, so bodyIntact is true here for every successful send; the
+            // check is kept so this route cannot silently record consent if the
+            // channel ever starts rewriting bodies.
+            const disclosureDelivered = consentResult.sent && consentResult.bodyIntact;
+            await recordConsentDisclosureResult(from, disclosureDelivered);
+            if (consentResult.sent && !consentResult.bodyIntact) {
+              console.error(
+                "[WhatsApp Webhook] consent disclosure was ALTERED in transit — consent NOT recorded, thread stays gated"
+              );
+            }
             console.log(
-              `[WhatsApp Webhook] consent disclosure sent=${consentResult.sent} decision=${consentResult.decision}`
+              `[WhatsApp Webhook] consent disclosure sent=${consentResult.sent} intact=${consentResult.bodyIntact} recorded=${disclosureDelivered} decision=${consentResult.decision}`
             );
           }
 
@@ -229,7 +247,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // 24h-window gate and state logging stay accurate regardless.
           const paused = result.stateAfter.humanHandoff === true;
 
-          if (paused) {
+          if (result.awaitingConsent) {
+            // Disclosure turn: the pipeline produced no reply and did not touch the
+            // patient's text. Nothing else may be sent until the disclosure lands.
+            console.log(
+              "[WhatsApp Webhook] awaiting consent disclosure — bot reply and booking handoff skipped"
+            );
+          } else if (paused) {
             console.log("[WhatsApp Webhook] humanHandoff active — bot reply skipped");
           } else {
             // Send the assistant reply back to the customer — through the
@@ -302,7 +326,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             `[WhatsApp Webhook] sheets decision stage=${sheetsStage} shouldLogToSheet=${result.shouldLogToSheet} sheetLoggedComplete=${sheetLoggedComplete}`
           );
 
-          if (sheetsStage !== "complete") {
+          // Google Sheets is a Google/US destination: no patient row may leave while
+          // the disclosure is unconfirmed. Only reachable for a legacy thread that
+          // already had captured data before the consent flow existed.
+          if (result.awaitingConsent) {
+            console.log("[WhatsApp Webhook] sheets skipped reason=awaiting_consent");
+          } else if (sheetsStage !== "complete") {
             console.log("[WhatsApp Webhook] sheets skipped reason=not_complete");
           } else if (sheetLoggedComplete) {
             console.log("[WhatsApp Webhook] sheets skipped reason=already_logged");

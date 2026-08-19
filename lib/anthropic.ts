@@ -18,9 +18,12 @@
 // commercial terms so the DPA applies, and record that verification in the
 // compliance file.
 //
-// CONSENT: the KVKK consent disclosure (audit Step 4) is sent on first contact,
-// before the first bot reply, informing the patient that an AI assistant
-// processes their messages. See consentMessage in lib/inboundPipeline.ts.
+// CONSENT: generateSmsReply() is unreachable until the KVKK AI-intake disclosure
+// has been CONFIRMED delivered to that patient. processInboundMessage() returns at
+// the consent gate (consentDisclosureConfirmed) before any classification, slot
+// capture or model call, so a patient's first message is never transferred here;
+// the gate only opens once sendOutbound() reported sent:true for the disclosure
+// (audit findings O-5 and Y-3). See lib/inboundPipeline.ts.
 //
 // ZERO RETENTION: there is NO per-request opt-out — the API has no
 // "anthropic-no-log" / no-store header, and the `metadata` request field is
