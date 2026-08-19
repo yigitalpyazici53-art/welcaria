@@ -91,7 +91,8 @@ export async function GET(
 
 // ── DELETE — KVKK erasure ─────────────────────────────────────────────────────
 // Full right-to-erasure for one patient: clears the Redis conversation state, the
-// per-thread compliance keys, and every matching row in Google Sheets. Protected
+// per-thread compliance keys, that patient's rows in the compliance audit log, and
+// every matching row in Google Sheets. Protected
 // by middleware.ts (the /api/inbox/* session guard). Each store is erased
 // independently and its outcome reported, so a failure in one does not silently
 // skip the others — the response makes clear exactly what was removed.
@@ -121,13 +122,27 @@ export async function DELETE(
     redisState = { deletedKeys: [], error: err instanceof Error ? err.message : String(err) };
   }
 
-  // 2. Per-thread compliance keys (lastInbound + threadSend, all variants).
-  let compliance: { deletedKeys: string[]; error: string | null };
+  // 2. Per-thread compliance keys (lastInbound + threadSend, all variants) plus
+  //    this patient's rows in the shared compliance:log audit list, which stored
+  //    the raw phone number and used to survive erasure for up to 90 days.
+  let compliance: {
+    deletedKeys: string[];
+    logEntriesRemoved: number;
+    error: string | null;
+  };
   try {
-    const deletedKeys = await deleteComplianceForThread(phone);
-    compliance = { deletedKeys, error: null };
+    const result = await deleteComplianceForThread(phone);
+    compliance = {
+      deletedKeys: result.keys,
+      logEntriesRemoved: result.logEntriesRemoved,
+      error: result.logError,
+    };
   } catch (err) {
-    compliance = { deletedKeys: [], error: err instanceof Error ? err.message : String(err) };
+    compliance = {
+      deletedKeys: [],
+      logEntriesRemoved: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   // 3. Google Sheets rows matching this phone.
@@ -136,7 +151,7 @@ export async function DELETE(
   const anyError = Boolean(redisState.error || compliance.error || sheets.error);
 
   console.log(
-    `[Inbox] erasure phone=${maskPhone(phone)} redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} sheetRows=${sheets.deletedRows} anyError=${anyError}`
+    `[Inbox] erasure phone=${maskPhone(phone)} redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} complianceLogRows=${compliance.logEntriesRemoved} sheetRows=${sheets.deletedRows} anyError=${anyError}`
   );
 
   return NextResponse.json(

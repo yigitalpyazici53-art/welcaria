@@ -656,17 +656,118 @@ export async function handleAccountLevelWebhook(
 
 // ── KVKK erasure ────────────────────────────────────────────────────────────
 
+/** Strip transport decoration so two spellings of one number compare equal. */
+function normalizeThreadForMatch(thread: string): string {
+  const stripped = thread.replace(/^whatsapp:/i, "").trim();
+  return stripped.startsWith("+") ? stripped.slice(1) : stripped;
+}
+
 /**
- * Delete the per-thread compliance keys (lastInbound + threadSend) for a phone,
- * covering every transport key variant (bare, "+"-prefixed, and "whatsapp:"
- * forms) the same way deleteConversationState does. Tenant-level keys (quality,
- * breaker, bucket, activity, the audit log) are intentionally NOT touched — they
- * are not per-patient. Clears the memory mirror first, then Redis. Returns the
- * list of Redis key names targeted.
+ * True when one audit-log element belongs to `target` (an already-normalised
+ * bare-digits number).
+ *
+ * Elements are written by logCompliance() as JSON.stringify(ComplianceLogEntry),
+ * and `thread` is the ONLY field that can carry personal data — it holds the raw
+ * transport key exactly as the caller passed it ("905551112233",
+ * "+905551112233", "whatsapp:+905551112233"). `detail` is always a fixed
+ * operator string. So we parse the line and compare normalised threads rather
+ * than substring-matching the whole line, which could not distinguish a phone
+ * from a tenant id. The Upstash client may hand back an already-parsed object,
+ * so both shapes are handled. A line that will not parse falls back to a
+ * substring test on the bare digits: conservative in the safe direction (keep
+ * unless the number demonstrably appears).
  */
-export async function deleteComplianceForThread(thread: string): Promise<string[]> {
-  const stripped = thread.replace(/^whatsapp:/i, "");
-  const base = stripped.startsWith("+") ? stripped.slice(1) : stripped;
+function logEntryMatchesThread(raw: unknown, target: string): boolean {
+  let entry: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      return raw.includes(target);
+    }
+  }
+  const thread = (entry as { thread?: unknown } | null)?.thread;
+  return typeof thread === "string" && normalizeThreadForMatch(thread) === target;
+}
+
+/**
+ * KVKK erasure for the shared audit log (compliance:log).
+ *
+ * The list is common to every thread, so it cannot simply be deleted: it is
+ * read in full, the target patient's entries are filtered out, and the
+ * survivors are rebuilt. LRANGE 0 -1 returns head→tail (newest first, since
+ * logCompliance LPUSHes); RPUSHing them in that same order into a temp key
+ * preserves the ordering, and RENAME swaps it over the live key in one
+ * operation so readers never observe a half-written log. The original TTL is
+ * re-applied afterwards (RENAME carries the temp key's TTL, which is none).
+ * Entries appended between the read and the rename are the one small race
+ * window; erasure is a rare, operator-triggered action, so this is accepted
+ * rather than paid for with a Lua script.
+ */
+async function deleteThreadFromComplianceLog(
+  thread: string
+): Promise<{ removed: number; error: string | null }> {
+  const r = getRedis();
+  // The audit log lives in Redis only — logCompliance never mirrors it to memKv.
+  if (!r) return { removed: 0, error: null };
+
+  const target = normalizeThreadForMatch(thread);
+  if (!target) return { removed: 0, error: null };
+
+  const tmpKey = `${LOG_KEY}:erase:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const entries = await r.lrange<unknown>(LOG_KEY, 0, -1);
+    if (!entries || entries.length === 0) return { removed: 0, error: null };
+
+    const kept: string[] = [];
+    let removed = 0;
+    for (const raw of entries) {
+      if (logEntryMatchesThread(raw, target)) {
+        removed++;
+        continue;
+      }
+      kept.push(typeof raw === "string" ? raw : JSON.stringify(raw));
+    }
+    if (removed === 0) return { removed: 0, error: null };
+
+    if (kept.length === 0) {
+      await r.del(LOG_KEY);
+      return { removed, error: null };
+    }
+
+    const ttl = await r.ttl(LOG_KEY);
+    // Chunked so a long log does not become one oversized REST payload.
+    for (let i = 0; i < kept.length; i += 100) {
+      await r.rpush(tmpKey, ...kept.slice(i, i + 100));
+    }
+    await r.rename(tmpKey, LOG_KEY);
+    await r.expire(LOG_KEY, typeof ttl === "number" && ttl > 0 ? ttl : LOG_TTL_S);
+    return { removed, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Compliance] audit-log erasure failed:", message);
+    try {
+      await r.del(tmpKey);
+    } catch {
+      // best-effort temp cleanup
+    }
+    return { removed: 0, error: message };
+  }
+}
+
+/**
+ * Delete everything the compliance layer holds about one patient: the per-thread
+ * keys (lastInbound + threadSend) across every transport key variant (bare,
+ * "+"-prefixed, and "whatsapp:" forms) the same way deleteConversationState
+ * does, plus that thread's entries in the shared audit log. Tenant-level keys
+ * (quality, breaker, bucket, activity) are intentionally NOT touched — they are
+ * not per-patient and hold no personal data. Clears the memory mirror first,
+ * then Redis. Returns the Redis key names targeted plus the audit-log outcome.
+ */
+export async function deleteComplianceForThread(
+  thread: string
+): Promise<{ keys: string[]; logEntriesRemoved: number; logError: string | null }> {
+  const base = normalizeThreadForMatch(thread);
   const withPlus = `+${base}`;
   const variants = [base, withPlus, `whatsapp:${base}`, `whatsapp:${withPlus}`];
 
@@ -688,7 +789,9 @@ export async function deleteComplianceForThread(thread: string): Promise<string[
     }
   }
 
-  return keys;
+  const log = await deleteThreadFromComplianceLog(thread);
+
+  return { keys, logEntriesRemoved: log.removed, logError: log.error };
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
