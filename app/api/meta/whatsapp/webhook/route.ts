@@ -10,6 +10,7 @@ import { notifyOwner } from "@/lib/twilio";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
+import { isDuplicateMessage } from "@/lib/messageDedup";
 import { maskPhone } from "@/lib/sanitize";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let messagesProcessed = 0;
   let messagesSkipped = 0;
   let messagesFailed = 0;
+  let messagesDuplicate = 0;
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -171,6 +173,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (!messages || messages.length === 0) continue;
 
       for (const message of messages) {
+        // ── Per-message deduplication — BEFORE any side effect ──────────────
+        // Meta retries the whole webhook when we are slow or return non-2xx, and
+        // one payload can carry several messages, so the gate is claimed per
+        // message.id rather than per delivery. It sits at the top of the loop:
+        // nothing below it — state writes, LLM call, outbound sends, Sheets —
+        // can run for an id that was already claimed. A duplicate is dropped
+        // silently and the handler still answers 200 at the end, which is what
+        // makes Meta stop retrying.
+        if (message.id && (await isDuplicateMessage(message.id, "[WhatsApp Webhook]"))) {
+          console.warn(
+            `[WhatsApp Webhook] Duplicate message id ${message.id} — ignoring Meta retry`
+          );
+          messagesDuplicate++;
+          continue;
+        }
+
         if (message.type !== "text") {
           console.log(`[WhatsApp Webhook] Unsupported message type: ${message.type} — skipping`);
           messagesSkipped++;
@@ -381,5 +399,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     messagesProcessed,
     messagesSkipped,
     messagesFailed,
+    messagesDuplicate,
   });
 }
