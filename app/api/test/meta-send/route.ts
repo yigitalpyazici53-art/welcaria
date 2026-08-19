@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendOutbound } from "@/lib/outboundSend";
 import { secretsMatch } from "@/lib/secretCompare";
+import { isLocalDevelopment } from "@/lib/devGuard";
 
 function maskToken(token: string | undefined): {
   hasToken: boolean;
@@ -20,9 +21,11 @@ function maskToken(token: string | undefined): {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // ── 0. Disabled in production ─────────────────────────────────────────────
-  // This is a test/diagnostic endpoint and must never be reachable on prod.
-  if (process.env.VERCEL_ENV === "production") {
+  // ── 0. Local development only (allow-list, fails closed) ──────────────────
+  // Excluding only "production" left this live on preview deployments, which
+  // normally carry production's Meta token — i.e. real sends to real patients,
+  // plus the token prefix/suffix disclosed in the diagnostics block below.
+  if (!isLocalDevelopment()) {
     return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
   }
 

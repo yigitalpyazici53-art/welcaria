@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import twilio from "twilio";
 import { sendOutbound } from "@/lib/outboundSend";
+import { isValidTwilioSignature } from "@/lib/twilioSignature";
 import { sanitizeSmsText, maskPhone } from "@/lib/sanitize";
 import { logToSheet } from "@/lib/googleSheets";
 
@@ -38,37 +38,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   console.log(`[Voice] From: ${maskPhone(from)} | To: ${maskPhone(to)} | CallSid: ${callSid}`);
 
-  // ── Validate Twilio signature in production ──────────────────────────────
+  // ── Validate Twilio signature — ALWAYS ───────────────────────────────────
   // Mirrors the incoming-sms route: an unsigned/forged POST must not be able to
   // trigger an outbound SMS to an attacker-chosen number.
-  if (process.env.NODE_ENV === "production") {
-    try {
-      const authToken        = process.env.TWILIO_AUTH_TOKEN ?? "";
-      const twilioSignature  = req.headers.get("x-twilio-signature") ?? "";
-      const configuredUrl    = process.env.WEBHOOK_URL;
-      const urlForValidation = configuredUrl ?? req.url;
-
-      if (!configuredUrl) {
-        console.warn(`[Voice] WEBHOOK_URL not set — falling back to req.url=${req.url}`);
-      }
-
-      const paramsObj: Record<string, string> = {};
-      for (const [key, value] of params.entries()) paramsObj[key] = value;
-
-      const isValid = twilio.validateRequest(authToken, twilioSignature, urlForValidation, paramsObj);
-      if (!isValid) {
-        console.warn(
-          `[Voice] signature failed — url-used=${urlForValidation} req-url=${req.url} sig-len=${twilioSignature.length}`
-        );
-        return new NextResponse("Forbidden", { status: 403 });
-      }
-      console.log("[Voice] signature ok");
-    } catch (sigErr) {
-      console.error("[Voice] Signature validation threw:", sigErr instanceof Error ? sigErr.message : sigErr);
-      return new NextResponse("Forbidden", { status: 403 });
-    }
-  } else {
-    console.log("[Voice] signature disabled (non-production)");
+  //
+  // The URL override is TWILIO_VOICE_WEBHOOK_URL, not WEBHOOK_URL: Twilio signs
+  // the exact configured URL, and WEBHOOK_URL points at the /incoming-sms path,
+  // so validating this route against it would reject every genuine call. Unset,
+  // the URL is rebuilt from the request's forwarded host.
+  if (!isValidTwilioSignature(req, params, "[Voice]", process.env.TWILIO_VOICE_WEBHOOK_URL)) {
+    return new NextResponse("Forbidden", { status: 403 });
   }
   console.log(`[Voice] Sending missed-call SMS (${MISSED_CALL_SMS.length} chars): ${MISSED_CALL_SMS}`);
 

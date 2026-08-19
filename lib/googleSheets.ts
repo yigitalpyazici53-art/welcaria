@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { maskPhone } from "./sanitize";
+import { maskPhone, sanitizeSpreadsheetCell } from "./sanitize";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
@@ -58,27 +58,41 @@ export async function logToSheet(entry: LogEntry): Promise<LogToSheetResult> {
     const auth = getAuth();
     const sheets = google.sheets({ version: "v4", auth });
 
+    // valueInputOption "RAW" below is the primary defence — it stops the API from
+    // parsing any cell into a formula. The quote prefix is the second layer, for
+    // the paths RAW does not cover: a future switch back to USER_ENTERED, or this
+    // data being exported and re-imported into Sheets/Excel.
+    //
+    // It is applied to the columns that carry patient-authored free text, and NOT
+    // to phone / timestamp / enum columns. Under RAW a leading quote is stored as a
+    // literal character rather than consumed as Sheets' text marker, so guarding
+    // the phone column would visibly rewrite "+905551112233" as "'+905551112233"
+    // in the clinic's sheet. Those columns are not free text and RAW already
+    // covers them.
+    const guard = sanitizeSpreadsheetCell;
     const row = [
       entry.createdAt,
       entry.source,
-      entry.name,
+      guard(entry.name),
       entry.phone,
-      entry.service,
-      entry.preferredDate,
-      entry.preferredTime,
-      entry.location,
+      guard(entry.service),
+      guard(entry.preferredDate),
+      guard(entry.preferredTime),
+      guard(entry.location),
       entry.urgency,
       entry.leadScore,
       entry.intent,
-      entry.notes,
-      entry.conversationSummary,
+      guard(entry.notes),
+      guard(entry.conversationSummary),
       entry.status,
     ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
       range: "Sheet1!A:N",
-      valueInputOption: "USER_ENTERED",
+      // RAW (never USER_ENTERED): the API must store patient text as a literal
+      // string and never parse it into a formula. See sanitizeSpreadsheetCell.
+      valueInputOption: "RAW",
       requestBody: { values: [row] },
     });
 

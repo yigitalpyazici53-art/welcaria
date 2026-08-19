@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import twilio from "twilio";
 import { notifyOwner } from "@/lib/twilio";
+import { isValidTwilioSignature } from "@/lib/twilioSignature";
 import { sendOutbound } from "@/lib/outboundSend";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
@@ -94,38 +94,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // ── 3. Validate Twilio signature in production ───────────────────────────
-  if (process.env.NODE_ENV === "production") {
-    try {
-      const authToken        = process.env.TWILIO_AUTH_TOKEN ?? "";
-      const twilioSignature  = req.headers.get("x-twilio-signature") ?? "";
-      const configuredUrl    = process.env.WEBHOOK_URL;
-      const urlForValidation = configuredUrl ?? req.url;
-
-      console.log(
-        `[SMS] sig-check url=${urlForValidation} using-configured-url=${!!configuredUrl} sig-present=${twilioSignature.length > 0}`
-      );
-      if (!configuredUrl) {
-        console.warn(`[SMS] WEBHOOK_URL not set — falling back to req.url=${req.url}`);
-      }
-
-      const paramsObj: Record<string, string> = {};
-      for (const [key, value] of params.entries()) paramsObj[key] = value;
-
-      const isValid = twilio.validateRequest(authToken, twilioSignature, urlForValidation, paramsObj);
-      if (!isValid) {
-        console.warn(
-          `[SMS] signature failed — url-used=${urlForValidation} req-url=${req.url} sig-len=${twilioSignature.length}`
-        );
-        return new NextResponse("Forbidden", { status: 403 });
-      }
-      console.log("[SMS] signature ok");
-    } catch (sigErr) {
-      console.error("[SMS] Signature validation threw:", sigErr instanceof Error ? sigErr.message : sigErr);
-      return new NextResponse("Forbidden", { status: 403 });
-    }
-  } else {
-    console.log("[SMS] signature disabled (non-production)");
+  // ── 3. Validate Twilio signature — ALWAYS ────────────────────────────────
+  // No NODE_ENV condition: an unsigned POST here forges an inbound message with
+  // an attacker-chosen `From`, writes conversation state for that number, opens
+  // the 24h send window, and makes the clinic's Twilio account text whoever the
+  // attacker names. See lib/twilioSignature.ts for the one explicit opt-out.
+  if (!isValidTwilioSignature(req, params, "[SMS]", process.env.WEBHOOK_URL)) {
+    return new NextResponse("Forbidden", { status: 403 });
   }
 
   if (!customerMessage.trim()) {

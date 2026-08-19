@@ -161,19 +161,23 @@ npm run test-sms -- "tüm vücut lazer epilasyon fiyatı nedir?"
 
 ---
 
-## Internal production test endpoint
+## Internal test endpoint (local development only)
 
 Simulate an inbound customer message without using Twilio SMS. Runs the full Welcaria pipeline and returns a JSON preview — **no SMS is sent, no Sheets row is written.**
 
 **Endpoint:** `POST /api/test/inbound`
 
+> **Local development only.** This route (and `/api/test/reset`, `/api/test/meta-send`) returns **404 on every deployed environment** — production *and* preview. It runs only when `VERCEL_ENV=development`, or when `VERCEL_ENV` is unset and `NODE_ENV=development` (i.e. `next dev` on your machine). Previews inherit production's Redis and Meta credentials, so leaving these reachable there meant a preview URL plus the shared secret could read real conversations and forge an inbound that pries open a patient's 24h WhatsApp window.
+
 **Required env var:**
 
 | Variable | Notes |
 |---|---|
-| `TEST_WEBHOOK_SECRET` | A long random string you choose. Set it in Vercel and locally in `.env.local`. |
+| `TEST_WEBHOOK_SECRET` | A long random string you choose. Only needed locally in `.env.local`. |
 
-> **Warning:** Keep `TEST_WEBHOOK_SECRET` private. Anyone who knows it can trigger pipeline logic and read conversation state on your production instance.
+> **Warning:** Keep `TEST_WEBHOOK_SECRET` private. It is a second layer only — the environment guard above is what keeps this endpoint off deployed instances.
+
+The response reports flow markers (stage, lead score, language, history length, and `has*` booleans), **not** the stored conversation. Full `stateBefore` / `stateAfter` dumps and the owner-alert preview were removed: they exposed the name, phone, notes and message history of any number the caller named.
 
 **Request body:**
 
@@ -183,18 +187,6 @@ Simulate an inbound customer message without using Twilio SMS. Runs the full Wel
   "from":   "+905551112233",
   "body":   "Merhaba lazer epilasyon fiyatı alabilir miyim?"
 }
-```
-
-**curl example (production):**
-
-```bash
-curl -s -X POST https://YOUR-VERCEL-DOMAIN/api/test/inbound \
-  -H "Content-Type: application/json" \
-  -d '{
-    "secret": "YOUR_TEST_WEBHOOK_SECRET",
-    "from":   "+905551112233",
-    "body":   "Merhaba lazer epilasyon fiyatı alabilir miyim?"
-  }' | jq .
 ```
 
 **curl example (local dev server):**
@@ -269,7 +261,7 @@ Use this endpoint to test Meta WhatsApp outbound sending directly from the Verce
 **curl example (production):**
 
 ```bash
-curl -X POST https://randevuflow.vercel.app/api/test/meta-send \
+curl -X POST http://localhost:3000/api/test/meta-send \
   -H "Content-Type: application/json" \
   -d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","to":"905419473049","body":"Test from Welcaria"}'
 ```
@@ -347,7 +339,7 @@ The endpoint deletes both the bare and `+`-prefixed key variants (`conv:<phone>`
 **curl example (production):**
 
 ```bash
-curl -X POST https://randevuflow.vercel.app/api/test/reset \
+curl -X POST http://localhost:3000/api/test/reset \
   -H "Content-Type: application/json" \
   -d '{"secret":"YOUR_TEST_WEBHOOK_SECRET","from":"905419473049"}'
 ```

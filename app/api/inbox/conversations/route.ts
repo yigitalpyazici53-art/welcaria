@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getRedis } from "@/lib/redis";
+import { requireInboxSession } from "@/lib/inboxGuard";
 import type { ConversationState } from "@/lib/conversationState";
 
-// Conversation-list for the pilot inbox. Protected by middleware.ts.
+// Conversation-list for the pilot inbox. Authenticated by this handler itself
+// (requireInboxSession), with middleware.ts as an outer perimeter.
 //
 // Approach: SCAN conv:* directly. Chosen over a thread-index set because it
 // requires ZERO changes to the inbound pipeline (an index would need a write on
@@ -22,7 +24,10 @@ interface ConversationSummary {
   lastUpdated: number | null;
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(req: Request): Promise<NextResponse> {
+  const unauthorized = await requireInboxSession(req);
+  if (unauthorized) return unauthorized;
+
   const r = getRedis();
   if (!r) {
     // Memory-mode dev without Redis: nothing to enumerate.

@@ -46,6 +46,39 @@ interface MetaWebhookValue {
   }>;
 }
 
+// Meta signs the raw body as "sha256=<64 lowercase hex chars>".
+//
+// The header is validated against that shape BEFORE any byte comparison. The
+// previous version compared string lengths and then handed the values to
+// timingSafeEqual, which measures BUFFER length: a header of the right character
+// count containing a multi-byte character (e.g. a "ü") produced buffers of
+// different byte lengths, timingSafeEqual threw a RangeError, and nothing caught
+// it — so a malformed signature crashed the route with a 500 instead of being
+// rejected with a 403. A rejection path that can itself fail is not a rejection
+// path. Shape check first, byte-length check second, whole thing wrapped.
+function signatureMatches(
+  header: string | null,
+  rawBody: string,
+  appSecret: string
+): boolean {
+  if (!header || !/^sha256=[0-9a-f]{64}$/.test(header)) return false;
+
+  try {
+    const expected =
+      "sha256=" + crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+    const provided = Buffer.from(header, "utf8");
+    const expectedBuf = Buffer.from(expected, "utf8");
+    if (provided.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(provided, expectedBuf);
+  } catch (err) {
+    console.error(
+      "[WhatsApp Webhook] signature comparison threw (rejecting):",
+      err instanceof Error ? err.message : err
+    );
+    return false;
+  }
+}
+
 // ── GET — Meta webhook verification ──────────────────────────────────────────
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(req.url);
@@ -79,15 +112,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const rawBody = await req.text();
 
-  const signature = req.headers.get("x-hub-signature-256") ?? "";
-  const expectedSig =
-    "sha256=" + crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
-
-  const signaturesMatch =
-    signature.length === expectedSig.length &&
-    crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig));
-
-  if (!signaturesMatch) {
+  if (!signatureMatches(req.headers.get("x-hub-signature-256"), rawBody, appSecret)) {
     console.warn("[WhatsApp Webhook] Signature verification failed");
     return new NextResponse("Forbidden", { status: 403 });
   }

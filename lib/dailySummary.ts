@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { readLeadsForDateRange } from "./googleSheets";
 import { clinicConfig } from "./clinicConfig";
+import { sanitizeSpreadsheetCell } from "./sanitize";
 
 export interface LeadSummaryEntry {
   name: string;
@@ -37,11 +38,23 @@ export async function computeDailySummary(targetDate: Date): Promise<DailySummar
   const qualified    = leads.filter((l) => l.leadScore === "warm" || l.leadScore === "hot");
   const afterHours   = leads.filter((l) => l.createdAt && isAfterHours(l.createdAt));
 
+  // Lead fields are patient-authored text read back out of the sheet, so they get
+  // the same formula-injection guard on the way into the summary. Rows written
+  // before the RAW/guarded write path landed can still hold "=..." text, and the
+  // owner routinely copies lines out of this email back into a spreadsheet —
+  // neutralizing here keeps that paste inert. Sanitizing once at the boundary
+  // covers both the text and HTML builders below.
   const topLeads = [...hotLeads, ...warmLeads].slice(0, 3).map((l) => ({
-    name:          l.name         || "—",
-    service:       l.service      || "Inquiry",
-    preferredTime: [l.preferredDate, l.preferredTime].filter(Boolean).join(" ") || "Not specified",
-    phone:         l.phone        || "—",
+    name:          sanitizeSpreadsheetCell(l.name)    || "—",
+    service:       sanitizeSpreadsheetCell(l.service) || "Inquiry",
+    preferredTime:
+      sanitizeSpreadsheetCell(
+        [l.preferredDate, l.preferredTime].filter(Boolean).join(" ")
+      ) || "Not specified",
+    // phone is left unguarded on purpose: it is a "+90..." literal the owner reads
+    // and dials, and it is not free text (slot extraction only ever writes
+    // phone-shaped values into it).
+    phone:         l.phone                            || "—",
   }));
 
   return {

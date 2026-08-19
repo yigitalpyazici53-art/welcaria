@@ -3,8 +3,10 @@ import { sendOutbound } from "@/lib/outboundSend";
 import { addToHistory, getStateStorageMode } from "@/lib/conversationState";
 import type { ComplianceDecision } from "@/lib/compliance";
 import { maskPhone } from "@/lib/sanitize";
+import { requireInboxMutation } from "@/lib/inboxGuard";
 
-// Manual owner reply for the pilot inbox. Protected by middleware.ts.
+// Manual owner reply for the pilot inbox. Authenticated by this handler itself
+// (session + Origin), with middleware.ts as an outer perimeter.
 //
 // Sends a clinic-authored message to the patient through the mandatory
 // compliance gate (lib/outboundSend.ts). Uses kind: "system" so it is treated
@@ -36,6 +38,11 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ phone: string }> }
 ): Promise<NextResponse> {
+  // Session + Origin: this sends a WhatsApp message to a patient, so a
+  // cookie-bearing request driven by another origin must never reach it.
+  const blocked = await requireInboxMutation(req);
+  if (blocked) return blocked;
+
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
   if (!phone) {

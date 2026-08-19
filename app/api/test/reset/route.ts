@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getStateStorageMode, deleteConversationState } from "@/lib/conversationState";
 import { secretsMatch } from "@/lib/secretCompare";
 import { maskPhone } from "@/lib/sanitize";
+import { isLocalDevelopment } from "@/lib/devGuard";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // ── 0. Disabled in production ─────────────────────────────────────────────
-  // This is a test/diagnostic endpoint and must never be reachable on prod.
-  if (process.env.VERCEL_ENV === "production") {
+  // ── 0. Local development only (allow-list, fails closed) ──────────────────
+  // Excluding only "production" left this live on preview deployments, which
+  // normally share production's Redis — i.e. remote deletion of real state.
+  if (!isLocalDevelopment()) {
     return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
   }
 

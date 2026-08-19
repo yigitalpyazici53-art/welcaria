@@ -6,14 +6,35 @@ import {
   readConversationState,
   writeConversationState,
 } from "@/lib/conversationState";
+import type { ConversationState } from "@/lib/conversationState";
 import { processInboundMessage } from "@/lib/inboundPipeline";
 import { secretsMatch } from "@/lib/secretCompare";
 import { maskPhone } from "@/lib/sanitize";
+import { isLocalDevelopment } from "@/lib/devGuard";
+
+// Non-identifying view of a conversation state. Carries the flow markers a
+// developer needs to debug the pipeline (did the stage advance, was the vertical
+// detected, is the history growing) and NO patient identity: no name, phone,
+// notes, treatment area, preferred date/time, or message history.
+function summarizeState(state: ConversationState) {
+  return {
+    stage: state.stage,
+    serviceCategory: state.serviceCategory ?? null,
+    leadScore: state.leadScore ?? null,
+    urgency: state.urgency ?? null,
+    detectedLanguage: state.detectedLanguage ?? null,
+    historyLength: Array.isArray(state.history) ? state.history.length : 0,
+    humanHandoff: state.humanHandoff === true,
+    consentGiven: state.consentGiven === true,
+    hasName: !!state.name,
+    hasTreatmentArea: !!(state.treatmentArea || state.service),
+    hasPreferredDateTime: !!(state.preferredDate || state.preferredTime),
+  };
+}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // ── 0. Disabled in production ─────────────────────────────────────────────
-  // This is a test/diagnostic endpoint and must never be reachable on prod.
-  if (process.env.VERCEL_ENV === "production") {
+  // ── 0. Local development only (allow-list, fails closed) ──────────────────
+  if (!isLocalDevelopment()) {
     return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
   }
 
@@ -54,7 +75,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let diagWriteAttempted = false;
   let diagWriteSucceeded = false;
   let diagReadAfterFound = false;
-  let diagReadAfterService: string | null = null;
+  // Round-trip proof that does not echo patient text: the persisted stage, not
+  // the persisted service name.
+  let diagReadAfterStage: string | null = null;
   let diagRedisError: string | null = null;
 
   if (redisConfigured) {
@@ -77,7 +100,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       diagWriteSucceeded = true;
       const postState = await readConversationState(from);
       diagReadAfterFound = postState !== null;
-      diagReadAfterService = postState?.service ?? null;
+      diagReadAfterStage = postState?.stage ?? null;
     } catch (err) {
       if (!diagRedisError) {
         diagRedisError = err instanceof Error ? err.message : String(err);
@@ -106,11 +129,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     input: result.input,
     intent: result.intent,
     extractedSlots: result.extractedSlots,
-    stateBefore: result.stateBefore,
-    stateAfter: result.stateAfter,
+    // stateBefore / stateAfter / ownerAlertPreview used to be returned in full.
+    // They are the STORED conversation — name, phone, treatment, notes, and the
+    // whole message history — for any `from` the caller names, which turned this
+    // route into a one-request PII dump of an arbitrary patient. Only
+    // non-identifying flow markers are reported now; the diagnostic purpose
+    // (did the stage advance? did Redis persist it?) is unchanged.
+    stateBefore: summarizeState(result.stateBefore),
+    stateAfter: summarizeState(result.stateAfter),
     nextStage: result.nextStage,
     assistantReply: result.assistantReply,
-    ownerAlertPreview: result.ownerAlertPreview,
     wouldNotifyOwner: result.shouldNotifyOwner,
     wouldLogToSheet: result.shouldLogToSheet,
     stateStorage,
@@ -125,7 +153,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       writeAttempted: diagWriteAttempted,
       writeSucceeded: diagWriteSucceeded,
       readAfterFound: diagReadAfterFound,
-      readAfterService: diagReadAfterService,
+      readAfterStage: diagReadAfterStage,
       redisError: diagRedisError,
     },
   });

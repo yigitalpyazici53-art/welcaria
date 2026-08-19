@@ -1,20 +1,24 @@
 import { NextResponse } from "next/server";
 import { getStateStorageMode, updateState } from "@/lib/conversationState";
 import { maskPhone } from "@/lib/sanitize";
+import { requireInboxMutation } from "@/lib/inboxGuard";
 
-// Authenticated pause/resume wrapper for the pilot inbox. Protected by
-// middleware.ts (the /api/inbox/* session-cookie guard).
+// Pause/resume the bot on one conversation. Authenticated by this handler itself
+// (session + Origin), with middleware.ts as an outer perimeter — and this is the
+// ONLY way to set humanHandoff.
 //
-// The public /api/handoff endpoint is gated by TEST_WEBHOOK_SECRET, which must
-// never be exposed to the browser. Rather than have the page call /api/handoff
-// with that secret, this thin wrapper performs the exact same pause/resume
-// server-side — it sets humanHandoff on the conversation state directly, the
-// same single field /api/handoff writes. No new behaviour, just an
-// already-authenticated surface the inbox UI can safely call.
+// A second, unauthenticated-by-session endpoint (POST /api/handoff, gated only by
+// the shared TEST_WEBHOOK_SECRET and live in production) used to write the same
+// field. It was removed: anyone holding that test secret could silence the bot on
+// any patient thread, and the secret circulates in dev scripts and CI where it is
+// treated as low-sensitivity. Do not reintroduce a secret-gated variant.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ phone: string }> }
 ): Promise<NextResponse> {
+  const blocked = await requireInboxMutation(req);
+  if (blocked) return blocked;
+
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
   if (!phone) {

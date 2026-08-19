@@ -7,8 +7,10 @@ import {
 import { deleteComplianceForThread } from "@/lib/compliance";
 import { deleteLeadFromSheets } from "@/lib/googleSheets";
 import { maskPhone } from "@/lib/sanitize";
+import { requireInboxSession, requireInboxMutation } from "@/lib/inboxGuard";
 
-// Single-conversation read for the pilot inbox. Protected by middleware.ts.
+// Single-conversation read for the pilot inbox. Authenticated by each handler
+// itself, with middleware.ts as an outer perimeter.
 //
 // A thin read wrapper over ConversationState — no new persistence. Returns the
 // ≤10-message history already held in state (Option A: last-10/24h, no durable
@@ -17,9 +19,12 @@ import { maskPhone } from "@/lib/sanitize";
 // conversation-list endpoint returns it (Meta delivers `from` without a "+").
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ phone: string }> }
 ): Promise<NextResponse> {
+  const unauthorized = await requireInboxSession(req);
+  if (unauthorized) return unauthorized;
+
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
   if (!phone) {
@@ -91,9 +96,14 @@ export async function GET(
 // independently and its outcome reported, so a failure in one does not silently
 // skip the others — the response makes clear exactly what was removed.
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ phone: string }> }
 ): Promise<NextResponse> {
+  // Session + Origin: this erases Redis state AND Google Sheets rows, so a
+  // cookie-bearing request driven by another origin must never reach it.
+  const blocked = await requireInboxMutation(req);
+  if (blocked) return blocked;
+
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
   if (!phone) {
