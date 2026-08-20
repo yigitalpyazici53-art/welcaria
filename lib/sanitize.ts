@@ -107,6 +107,134 @@ export function ensureClinicNamePunctuation(text: string, clinicName: string): s
   return text.replace(re, "$1. $2");
 }
 
+// ── Patient identifier redaction (audit finding O-2) ──────────────────────────
+// Last line of defence on OUR OWN outgoing text. lib/prompt.ts no longer sends the
+// patient's name or phone to the model, and the deterministic templates no longer
+// embed them — but the model still SEES the identifiers in the raw history turns the
+// patient typed, so it can echo them back ("Teşekkürler Zeynep"). That reply is sent
+// AND written to state.history, which puts the identifier back into the next
+// cross-border request. This guard removes them deterministically.
+//
+// Applies ONLY to assistant-generated text. Patient message turns are never passed
+// here — redacting a patient's own free text is error-prone and is a deliberate
+// non-goal (their identifiers in history are covered by consent + the DPA).
+
+// Name tokens shorter than this are NOT redacted. Rationale: a 1-2 character token
+// carries almost no identifying power on its own, but matches constantly inside
+// ordinary words and initials, so redacting it would mangle legitimate replies far
+// more often than it would protect anything. Three characters is the shortest length
+// at which a real given name exists (e.g. "Ali", "Eda") — so genuine short names are
+// still covered, while "A." or "Ö" are left alone.
+const MIN_REDACTABLE_NAME_TOKEN = 3;
+
+// A candidate number in the reply must carry at least this many digits before it is
+// even compared against the patient's number. Keeps prices ("2.500"), times ("14:00"),
+// graft counts and session numbers out of the phone matcher entirely.
+const MIN_PHONE_DIGITS = 9;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Builds the needle list for a stored name: the full name first (so "Zeynep Kaya" is
+// removed as one unit), then each individual token. Longest-first ordering matters —
+// removing "Zeynep" first would leave a dangling "Kaya".
+function nameNeedles(name: string): string[] {
+  const cleaned = name.replace(/\s+/g, " ").trim();
+  if (!cleaned) return [];
+  const needles = new Set<string>();
+  if (cleaned.length >= MIN_REDACTABLE_NAME_TOKEN) needles.add(cleaned);
+  for (const token of cleaned.split(" ")) {
+    if (token.length >= MIN_REDACTABLE_NAME_TOKEN) needles.add(token);
+  }
+  // Array.from (not spread) — the scripts tsconfig targets ES5 and cannot iterate a Set.
+  return Array.from(needles).sort((a, b) => b.length - a.length);
+}
+
+// Word boundaries are expressed with Unicode property lookarounds instead of \b:
+// JavaScript's \b is ASCII-only, so "\bŞule\b" would never match after a space.
+// The pattern also swallows what normally travels WITH a name in these languages,
+// so removal does not leave debris in the sent message:
+//   - a leading honorific ("Sayın Zeynep" → "")
+//   - a Turkish apostrophe suffix ("Zeynep'e" → "")
+//   - the same case suffixes written WITHOUT the apostrophe, which the model often does
+//     ("Zeynepe", "Zeynepin" → ""). This is a CLOSED list of case/possessive suffixes,
+//     not "any few letters": an open-ended match would swallow unrelated words that merely
+//     start with the name. Plural "-ler/-lar" is deliberately excluded — "Zeynepler" is a
+//     different word, and a longer word that merely CONTAINS the name is left intact.
+//   - a trailing honorific ("Zeynep Hanım" → "")
+const TR_CASE_SUFFIXES = [
+  "nin", "n\u0131n", "nun", "n\u00fcn", "den", "dan", "ten", "tan",
+  "yle", "yla", "in", "\u0131n", "un", "\u00fcn", "de", "da", "te", "ta",
+  "le", "la", "ye", "ya", "yi", "y\u0131", "yu", "y\u00fc",
+  "im", "\u0131m", "um", "\u00fcm", "e", "a", "i", "\u0131", "u", "\u00fc",
+].join("|");
+
+function namePattern(needle: string): RegExp {
+  const NOT_WORD = "(?<![\\p{L}\\p{N}])";
+  const NOT_WORD_AFTER = "(?![\\p{L}\\p{N}])";
+  const LEADING_TITLE = "(?:Say\\u0131n\\s+)?";
+  const SUFFIX = `(?:['\\u2019]\\p{L}{1,4}|${TR_CASE_SUFFIXES})?`;
+  const TRAILING_TITLE =
+    "(?:\\s+(?:Han\\u0131mefendi|Han\\u0131m|Beyefendi|Bey|Bayan|Bay))?";
+  return new RegExp(
+    `${NOT_WORD}${LEADING_TITLE}${escapeRegex(needle)}${SUFFIX}${TRAILING_TITLE}${NOT_WORD_AFTER}`,
+    "giu"
+  );
+}
+
+// Repairs the punctuation/spacing left behind once a needle is cut out, so the patient
+// receives "Teşekkürler, randevunuz..." and not "Teşekkürler , randevunuz...".
+function tidyAfterRedaction(text: string): string {
+  return text
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/([(\[])\s+/g, "$1")
+    .replace(/,\s*,/g, ",")
+    .replace(/(^|[.!?]\s+)[,;:]\s*/g, "$1")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+export interface RedactionResult {
+  text: string;
+  // True when at least one identifier was actually removed — the caller logs this as a
+  // compliance signal (the model ignored the "never state the name" prompt rule).
+  redacted: boolean;
+}
+
+export function redactPatientIdentifiers(
+  text: string,
+  identifiers: { name?: string; phone?: string }
+): RedactionResult {
+  if (!text) return { text, redacted: false };
+  let out = text;
+
+  if (identifiers.name) {
+    for (const needle of nameNeedles(identifiers.name)) {
+      out = out.replace(namePattern(needle), "");
+    }
+  }
+
+  // Phone matching is done on digits, not on formatting: the model may reformat the
+  // number ("+90 532 123 45 67", "0532 123 45 67"). Every number-like run is normalized
+  // to digits and compared against the last MIN_PHONE_DIGITS digits of the stored
+  // number, which is the part that survives country-code and leading-zero variation.
+  // Only the PATIENT's number is matched, so the clinic's own published numbers pass through.
+  if (identifiers.phone) {
+    const storedDigits = identifiers.phone.replace(/\D/g, "");
+    if (storedDigits.length >= MIN_PHONE_DIGITS) {
+      const tail = storedDigits.slice(-MIN_PHONE_DIGITS);
+      out = out.replace(/\+?\d[\d\s\-().]{5,}\d/g, (match) => {
+        const digits = match.replace(/\D/g, "");
+        return digits.length >= MIN_PHONE_DIGITS && digits.endsWith(tail) ? "" : match;
+      });
+    }
+  }
+
+  if (out === text) return { text, redacted: false };
+  return { text: tidyAfterRedaction(out), redacted: true };
+}
+
 // SMS transport sanitization: GSM-safe charset (ASCII + Turkish letters, emoji stripped)
 // and hard length cap. Applied at SMS send time only — WhatsApp replies keep full
 // multilingual text via sanitizeReplyText.

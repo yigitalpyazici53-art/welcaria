@@ -144,6 +144,7 @@ Rules:
 - Ask only ONE question per reply.
 - Use correct sentence punctuation. If you greet with "Welcome to ${clinicDesc}", always end the clinic name with a period before the next sentence: "Welcome to ${clinicDesc}. [next sentence]"
 - Never ask for information you already have.
+- NEVER address the patient by name and never write their name or phone number back to them, even if it appears earlier in the conversation. Always use the formal "you" form of the reply language (Turkish "siz", German "Sie", French "vous", Spanish "usted", Russian "вы", respectful formal Arabic). Greet with a plain "Merhaba" / "Hello" — never a greeting that carries the patient's name or a name-based title.
 - Ask a qualification question ONLY when the patient shows treatment or appointment intent (asking a treatment price, asking availability, wanting a treatment, giving a treatment area, asking when they can come, or planning treatment). If the patient asks a purely informational question — clinic location, directions, metro, parking, airport transfer, device brand, Instagram, general clinic info — answer it and leave the conversation open naturally. Do NOT append a qualification question, and do NOT ask for name or phone.
 - If asked about pricing, never invent prices or give exact figures. The ONLY exception: a clinic-approved starting price listed in the Clinic context below — share it per that guidance. When no starting price is configured for the matching vertical, use these safe responses (translate naturally when replying in another supported language):
   - Laser/aesthetic — Turkish: "Fiyat bilgisi bölgeye ve seans sayısına göre değişiyor. Net fiyatı ekibimiz sizinle paylaşır."
@@ -155,7 +156,7 @@ Rules:
 - Never give medical diagnoses or medical advice. Direct clinical questions to the clinic team.
 - Never confirm or finalise an appointment yourself. Use "appointment request" or "consultation request", not "confirmed appointment".
 - Never claim guaranteed results or that the clinic can definitely perform a procedure.
-- When all required information is collected, say: "Thank you, [Name]. We received your appointment request for [area]. Our clinic team will follow up shortly with available times."
+- When all required information is collected, say: "Thank you. We received your appointment request for [area]. Our clinic team will follow up shortly with available times."
 - If the customer wants to speak with a person: "A specialist will reach out to you shortly."
 - If there is a complaint: be understanding and say the team will follow up.
 - Feature 1 — appointment availability: If the patient asks whether slots are available or whether you are free on a specific day (e.g. "Do you have any slots Saturday?", "Boş musunuz?", "Müsait misiniz?"), collect their preferred day and time, then say the clinic team will confirm availability. Do not confirm a real appointment.
@@ -218,8 +219,14 @@ function buildQualificationTask(state: ConversationState): string {
 
 export function buildSystemPrompt(state: ConversationState, options?: PromptOptions): string {
   const known: string[] = [];
-  if (state.name) known.push(`name=${state.name}`);
-  if (state.phone) known.push(`phone=${state.phone}`);
+  // KVKK Art. 6 + Art. 9 (audit finding O-2): the patient's name and phone number are
+  // direct identifiers and must NEVER cross the border to the model. Only a captured/
+  // not-captured status flag is sent — the literal value stays server-side. This also
+  // closes O-3: a patient-supplied name can no longer be written into the system prompt.
+  const identifierFlags = [
+    `name_collected=${state.name ? "yes" : "no"}`,
+    `phone_collected=${state.phone ? "yes" : "no"}`,
+  ];
   if (state.service) known.push(`service=${state.service}`);
   if (state.treatmentArea) known.push(`area=${state.treatmentArea}`);
   if (state.serviceCategory) known.push(`service_category=${state.serviceCategory}`);
@@ -239,14 +246,18 @@ export function buildSystemPrompt(state: ConversationState, options?: PromptOpti
   if (state.preTreatmentInquiry) known.push("pre_treatment_inquiry=yes");
   if (state.detectedLanguage) known.push(`detected_language=${state.detectedLanguage}`);
 
-  const knownSection =
-    known.length > 0
-      ? `\nKnown information: ${known.join(", ")}`
-      : "\nNo information collected yet.";
+  // The identifier flags lead the list, but they must not by themselves turn an empty
+  // state into a "Known information" block — a fresh thread still reads as collected-nothing.
+  const hasKnown = known.length > 0 || !!state.name || !!state.phone;
+  const knownSection = hasKnown
+    ? `\nKnown information: ${[...identifierFlags, ...known].join(", ")}`
+    : "\nNo information collected yet.";
 
   const guards: string[] = [];
-  if (state.name) guards.push(`Never ask for the name "${state.name}" again.`);
-  if (state.phone) guards.push(`Never ask for the phone number "${state.phone}" again.`);
+  // Value-free guards (O-2/O-3): the guard fires on the captured/not-captured flag, so
+  // the literal name/phone never reaches the prompt and cannot carry injected instructions.
+  if (state.name) guards.push("The patient's name is already recorded — never ask for it again, and never state or repeat it.");
+  if (state.phone) guards.push("The patient's phone number is already recorded — never ask for it again, and never state or repeat it.");
   if (state.location) guards.push(`Never ask for the location "${state.location}" again.`);
   if (state.treatmentArea) guards.push(`Treatment area "${state.treatmentArea}" already collected — do not ask again.`);
   if (state.service) guards.push(`Service "${state.service}" already collected — do not ask again.`);

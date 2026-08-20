@@ -463,48 +463,55 @@ export function firstTimeQuestionText(language?: string, service?: string): stri
 }
 
 // ── Completion reply ──────────────────────────────────────────────────────────
-// Turkish and English wording is byte-identical to the previous hardcoded replies so
-// existing conversations and tests keep the exact same copy.
+// KVKK / audit finding O-2: these replies are written into state.history and the last
+// 6 turns are sent to Anthropic (US) on every later turn — so an assistant template that
+// embeds the patient's NAME puts a direct identifier back into the cross-border payload
+// even though lib/prompt.ts no longer sends one. The name parameter is therefore REMOVED
+// from the signature rather than merely left unused: no call site can reintroduce it.
+// Every language keeps the formal "you" register (TR "siz", DE "Sie", FR "vous",
+// ES "usted", RU "вы", formal Arabic) and addresses the patient without a name.
+// The treatment area stays — it is not a direct identifier and the reply needs it.
 
-export function completionReply(language?: string, name?: string, area?: string): string {
+export function completionReply(language?: string, area?: string): string {
   const lang = resolveLanguage(language);
   switch (lang) {
     case "turkish": {
-      const thanks = name ? `Teşekkür ederiz ${name}.` : "Teşekkür ederiz.";
       const received = area ? `${area} için randevu talebinizi aldık.` : "Randevu talebinizi aldık.";
-      return `${thanks} ${received} Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
+      return `Teşekkür ederiz. ${received} Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
     }
     case "german":
-      return `Vielen Dank${name ? ` ${name}` : ""}. Wir haben Ihre Terminanfrage${area ? ` für ${area}` : ""} erhalten. Unser Team meldet sich in Kürze bei Ihnen.`;
+      return `Vielen Dank. Wir haben Ihre Terminanfrage${area ? ` für ${area}` : ""} erhalten. Unser Team meldet sich in Kürze bei Ihnen.`;
     case "arabic":
-      return `شكرًا لكم${name ? ` ${name}` : ""}. استلمنا طلب موعدكم${area ? ` بخصوص ${area}` : ""}. سيتواصل معكم فريقنا قريبًا.`;
+      return `شكرًا لكم. استلمنا طلب موعدكم${area ? ` بخصوص ${area}` : ""}. سيتواصل معكم فريقنا قريبًا.`;
     case "russian":
-      return `Спасибо${name ? `, ${name}` : ""}. Мы получили вашу заявку на приём${area ? ` (${area})` : ""}. Наша команда скоро свяжется с вами.`;
+      return `Спасибо. Мы получили вашу заявку на приём${area ? ` (${area})` : ""}. Наша команда скоро свяжется с вами.`;
     case "french":
-      return `Merci${name ? ` ${name}` : ""}. Nous avons bien reçu votre demande de rendez-vous${area ? ` pour ${area}` : ""}. Notre équipe vous contactera très prochainement.`;
+      return `Merci. Nous avons bien reçu votre demande de rendez-vous${area ? ` pour ${area}` : ""}. Notre équipe vous contactera très prochainement.`;
     case "spanish":
-      return `Gracias${name ? `, ${name}` : ""}. Hemos recibido su solicitud de cita${area ? ` para ${area}` : ""}. Nuestro equipo se pondrá en contacto con usted en breve.`;
+      return `Gracias. Hemos recibido su solicitud de cita${area ? ` para ${area}` : ""}. Nuestro equipo se pondrá en contacto con usted en breve.`;
     default: {
-      const thanks = name ? `Thank you, ${name}.` : "Thank you.";
       const received = area
         ? `We received your appointment request for ${area}.`
         : "We received your appointment request.";
-      return `${thanks} ${received} Our team will follow up shortly.`;
+      return `Thank you. ${received} Our team will follow up shortly.`;
     }
   }
 }
 
 // Post-completion explicit name correction ("Adım Zeynep değil, Ayşe"): confirm the
-// update without repeating the full completion message.
-export function nameUpdatedReply(name: string, language?: string): string {
+// update without repeating the full completion message. The corrected name IS stored in
+// state.name (server-side) but is deliberately NOT echoed back — echoing it would write
+// the identifier into history and from there into the Anthropic payload (finding O-2).
+// The acknowledgement works without it: the patient already knows what they just typed.
+export function nameUpdatedReply(language?: string): string {
   switch (resolveLanguage(language)) {
-    case "turkish": return `Teşekkürler, isminizi ${name} olarak güncelledik. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
-    case "german":  return `Danke, ${name} — wir haben Ihren Namen aktualisiert. Unser Team meldet sich in Kürze.`;
-    case "arabic":  return `شكرًا ${name}، قمنا بتحديث الاسم. سيتواصل معكم فريقنا قريبًا.`;
-    case "russian": return `Спасибо, ${name} — мы обновили имя. Наша команда скоро свяжется с вами.`;
-    case "french":  return `Merci ${name}, nous avons mis à jour votre nom. Notre équipe vous recontactera rapidement.`;
-    case "spanish": return `Gracias, ${name}; hemos actualizado su nombre. Nuestro equipo le contactará en breve.`;
-    default:        return `Thank you, ${name} — we have updated your name. Our team will follow up shortly.`;
+    case "turkish": return "Teşekkürler, adınızı kaydettik. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.";
+    case "german":  return "Danke — wir haben Ihren Namen aktualisiert. Unser Team meldet sich in Kürze.";
+    case "arabic":  return "شكرًا لكم، قمنا بتحديث الاسم. سيتواصل معكم فريقنا قريبًا.";
+    case "russian": return "Спасибо — мы обновили имя. Наша команда скоро свяжется с вами.";
+    case "french":  return "Merci, nous avons mis à jour votre nom. Notre équipe vous recontactera rapidement.";
+    case "spanish": return "Gracias, hemos actualizado su nombre. Nuestro equipo le contactará en breve.";
+    default:        return "Thank you — we have updated your name. Our team will follow up shortly.";
   }
 }
 

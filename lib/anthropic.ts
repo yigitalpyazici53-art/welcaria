@@ -5,9 +5,16 @@
 // generation. Because patients describe medical treatments (laser, hair
 // transplant, dental), this is special-category HEALTH DATA under KVKK Art. 6,
 // and the API call is a cross-border transfer under KVKK Art. 9. Concretely,
-// each request contains: the patient's latest message, the last 6 history turns
-// verbatim, and a system prompt (lib/prompt.ts) that embeds the captured lead
-// fields — including the patient's NAME and PHONE NUMBER — as literal values.
+// each request contains: the patient's latest message and the last 6 history
+// turns verbatim, plus a system prompt (lib/prompt.ts) carrying the captured
+// lead fields. The system prompt no longer contains DIRECT IDENTIFIERS: the
+// name and phone number are sent as captured/not-captured status flags only
+// (audit finding O-2), never as literal values. The deterministic reply templates
+// we write into history are identifier-free by construction too — completionReply()
+// and nameUpdatedReply() no longer accept a name parameter (lib/localization.ts).
+// STILL RAW: the patient's OWN message turns are not redacted (deliberate — redacting
+// free text is error-prone), so identifiers the patient typed themselves still appear
+// in history. That residual exposure is covered by consent + the DPA, not by code.
 //
 // DPA: a Data Processing Agreement with Anthropic is REQUIRED before real
 // patient data is processed in production. Anthropic's DPA
@@ -35,21 +42,24 @@
 // retention terms in the DPA are acceptable) is an open operational task, not
 // something this code can set.
 //
-// DATA MINIMIZATION (not implemented — documented for a future step): the
-// current request sends more than strictly necessary. The name and especially
-// the phone number in the system prompt only power personalization and
-// "don't ask again" guards; both could use placeholders (e.g. name=<captured>)
-// with no loss to the guard logic, at the cost of name-personalized replies.
-// A minimal-data variant would send only the latest message plus a structured
+// DATA MINIMIZATION (partially implemented): the system prompt sends
+// name_collected / phone_collected flags instead of the values, so the
+// "don't ask again" guards still work while no direct identifier is
+// transferred; the trade-off taken is that replies never address the patient
+// by name (the model is instructed to use the formal "you" form instead).
+// STILL OPEN: the last 6 history turns are sent as raw free text, so anything
+// the patient typed — name, phone, health details — is still transferred.
+// A fully minimal variant would drop raw history for a structured
 // non-identifying state summary (stage, service category, which slots are
-// filled) instead of raw history — the qualification flow is deterministic in
-// lib/inboundPipeline.ts, so reply quality, not correctness, is the trade-off.
+// filled); the qualification flow is deterministic in lib/inboundPipeline.ts,
+// so reply quality, not correctness, is the trade-off.
 // ──────────────────────────────────────────────────────────────────────────────
 
 import Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt, type PromptOptions } from "./prompt";
-import { sanitizeReplyText, ensureClinicNamePunctuation } from "./sanitize";
+import { sanitizeReplyText, ensureClinicNamePunctuation, redactPatientIdentifiers, maskPhone } from "./sanitize";
 import { clinicConfig } from "./clinicConfig";
+import { fallbackText } from "./localization";
 import type { ConversationState } from "./conversationState";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -112,6 +122,28 @@ export async function generateSmsReply(
   // Also ensures "Welcome to {clinicName}" is properly punctuated before the next sentence.
   const clean = ensureClinicNamePunctuation(sanitizeReplyText(raw), clinicConfig.name);
 
-  console.log("[Reply] generated (Claude):", clean.slice(0, 80) + (clean.length > 80 ? "..." : ""));
-  return clean;
+  // Identifier redaction (audit finding O-2). The model can still read the patient's
+  // name and number in the raw history turns, so the prompt rule forbidding it is a
+  // soft control; this is the hard one. It runs AFTER sanitization and BEFORE the value
+  // is returned — the caller sends this string and writes it to state.history, so
+  // anything removed here can never re-enter the next cross-border request.
+  const { text: redactedText, redacted } = redactPatientIdentifiers(clean, {
+    name: state.name,
+    phone: state.phone,
+  });
+  if (redacted) {
+    // Compliance signal: the model echoed an identifier despite the prompt rule.
+    // Logged without the reply body or the raw number.
+    console.warn(
+      `[Reply] patient identifier redacted from model output (thread ${maskPhone(state.phone ?? "")})`
+    );
+  }
+
+  // A reply that is empty after redaction would fail at send time. Fall back to the
+  // neutral localized acknowledgement rather than sending (or storing) the raw text.
+  const finalText =
+    redactedText.trim().length > 0 ? redactedText : fallbackText("postCompletionAck", state.detectedLanguage);
+
+  console.log("[Reply] generated (Claude):", finalText.slice(0, 80) + (finalText.length > 80 ? "..." : ""));
+  return finalText;
 }

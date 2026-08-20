@@ -147,7 +147,7 @@ function staticReplyFor(
   postCompletion: boolean
 ): string {
   if (postCompletion) {
-    if (slots.name) return nameUpdatedReply(slots.name, state.detectedLanguage);
+    if (slots.name) return nameUpdatedReply(state.detectedLanguage);
     return informationalOnly
       ? buildInformationalFallbackReply(input, slots, state)
       : fallbackText("postCompletionAck", state.detectedLanguage);
@@ -214,7 +214,7 @@ function buildCompleteReply(state: ConversationState): string {
   // Localize the canonical treatment area to the conversation language so a Turkish reply
   // never says "full body". A service name (no treatmentArea) passes through unchanged.
   const area = treatmentAreaLabel(state.treatmentArea, state.detectedLanguage) || state.service;
-  return completionReply(state.detectedLanguage, state.name, area);
+  return completionReply(state.detectedLanguage, area);
 }
 
 // ── KVKK consent gate (audit findings O-5 + Y-3) ─────────────────────────────

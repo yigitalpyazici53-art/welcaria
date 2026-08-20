@@ -2337,8 +2337,10 @@ async function testMultilingualStaticFallbacks(): Promise<void> {
   // Completion reply + booking link in every language, values verbatim
   const LINK = "https://clinic.example/book/abc";
   for (const lang of SUPPORTED_LANGUAGES) {
-    const c = completionReply(lang, "Sara", "full body");
-    assertContains(`completion(${lang}) keeps name verbatim`, c, "Sara");
+    const c = completionReply(lang, "full body");
+    // O-2 regression guard: the completion reply goes into state.history and from there
+    // into the Anthropic payload, so it must never carry the patient's name.
+    assertNotContains(`completion(${lang}) never echoes the patient name`, c, "Sara");
     assertContains(`completion(${lang}) keeps area verbatim`, c, "full body");
     assertContains(`booking link (${lang}) keeps URL verbatim`, formatBookingLinkMessage(LINK, lang), LINK);
   }

@@ -362,11 +362,11 @@ async function main() {
   // "tüm vücut"; a German one "Ganzkörper". The single treatmentAreaLabel() helper enforces this.
   console.log("\n── 5b. Treatment-area localization (no canonical leak) ──");
 
-  const trCompletion = completionReply("turkish", "Zeynep", treatmentAreaLabel("full body", "turkish"));
+  const trCompletion = completionReply("turkish", treatmentAreaLabel("full body", "turkish"));
   assertNotContains("TR completion reply must not leak 'full body'", trCompletion, "full body");
   assertContains("TR completion reply says 'tüm vücut'", trCompletion, "tüm vücut");
 
-  const deCompletion = completionReply("german", "Max", treatmentAreaLabel("full body", "german"));
+  const deCompletion = completionReply("german", treatmentAreaLabel("full body", "german"));
   assertNotContains("DE completion reply must not leak 'full body'", deCompletion, "full body");
   assertContains("DE completion reply says 'Ganzkörper'", deCompletion, "Ganzkörper");
 
