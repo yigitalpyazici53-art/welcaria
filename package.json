@@ -14,7 +14,8 @@
     "test-reset": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-reset-endpoint.ts",
     "test-daily-summary": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-daily-summary.ts",
     "test-nurabla": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-nurabla.ts",
-    "test-compliance": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-compliance.ts"
+    "test-compliance": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-compliance.ts",
+    "inbox-hash": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/hash-inbox-password.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.55.0",

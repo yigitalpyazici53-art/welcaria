@@ -8,6 +8,7 @@ import { deleteComplianceForThread } from "@/lib/compliance";
 import { deleteLeadFromSheets } from "@/lib/googleSheets";
 import { maskPhone } from "@/lib/sanitize";
 import { requireInboxSession, requireInboxMutation } from "@/lib/inboxGuard";
+import { logInboxAction } from "@/lib/inboxAudit";
 
 // Single-conversation read for the pilot inbox. Authenticated by each handler
 // itself, with middleware.ts as an outer perimeter.
@@ -22,8 +23,9 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ phone: string }> }
 ): Promise<NextResponse> {
-  const unauthorized = await requireInboxSession(req);
-  if (unauthorized) return unauthorized;
+  const auth = await requireInboxSession(req);
+  if (!auth.ok) return auth.response;
+  const { operator } = auth;
 
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
@@ -47,10 +49,24 @@ export async function GET(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[Inbox] conversation read failed for ${maskPhone(phone)}:`, error);
+    await logInboxAction({
+      operator,
+      action: "read_conversation",
+      phone,
+      outcome: "error",
+      detail: "state read failed",
+    });
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 
   if (!state) {
+    await logInboxAction({
+      operator,
+      action: "read_conversation",
+      phone,
+      outcome: "denied",
+      detail: "not found",
+    });
     return NextResponse.json(
       { ok: false, error: "Conversation not found", phone, stateStorage },
       { status: 404 }
@@ -77,6 +93,15 @@ export async function GET(
     qualificationNotes: state.qualificationNotes ?? null,
   };
 
+  // The response below hands the operator the patient's full message history —
+  // the single most sensitive read in the inbox, so it is recorded as an access.
+  await logInboxAction({
+    operator,
+    action: "read_conversation",
+    phone,
+    detail: `${history.length} messages`,
+  });
+
   return NextResponse.json({
     ok: true,
     phone,
@@ -102,8 +127,9 @@ export async function DELETE(
 ): Promise<NextResponse> {
   // Session + Origin: this erases Redis state AND Google Sheets rows, so a
   // cookie-bearing request driven by another origin must never reach it.
-  const blocked = await requireInboxMutation(req);
-  if (blocked) return blocked;
+  const auth = await requireInboxMutation(req);
+  if (!auth.ok) return auth.response;
+  const { operator } = auth;
 
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
@@ -153,6 +179,17 @@ export async function DELETE(
   console.log(
     `[Inbox] erasure phone=${maskPhone(phone)} redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} complianceLogRows=${compliance.logEntriesRemoved} sheetRows=${sheets.deletedRows} anyError=${anyError}`
   );
+
+  // Erasure destroys the patient record everywhere else; this line is the proof
+  // that it happened, who ordered it, and when. It survives precisely because the
+  // access log is separate from compliance:log and stores only a masked number.
+  await logInboxAction({
+    operator,
+    action: "erase",
+    phone,
+    outcome: anyError ? "error" : "ok",
+    detail: `redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} complianceLogRows=${compliance.logEntriesRemoved} sheetRows=${sheets.deletedRows}`,
+  });
 
   return NextResponse.json(
     {

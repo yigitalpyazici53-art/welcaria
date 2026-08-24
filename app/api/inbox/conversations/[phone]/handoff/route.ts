@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getStateStorageMode, updateState } from "@/lib/conversationState";
 import { maskPhone } from "@/lib/sanitize";
 import { requireInboxMutation } from "@/lib/inboxGuard";
+import { logInboxAction } from "@/lib/inboxAudit";
 
 // Pause/resume the bot on one conversation. Authenticated by this handler itself
 // (session + Origin), with middleware.ts as an outer perimeter — and this is the
@@ -16,8 +17,9 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ phone: string }> }
 ): Promise<NextResponse> {
-  const blocked = await requireInboxMutation(req);
-  if (blocked) return blocked;
+  const auth = await requireInboxMutation(req);
+  if (!auth.ok) return auth.response;
+  const { operator } = auth;
 
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
@@ -46,10 +48,23 @@ export async function POST(
     console.log(
       `[Inbox] handoff set phone=${maskPhone(phone)} humanHandoff=${parsed.paused} stateStorage=${stateStorage}`
     );
+    await logInboxAction({
+      operator,
+      action: "handoff",
+      phone,
+      detail: `humanHandoff=${parsed.paused}`,
+    });
     return NextResponse.json({ ok: true, phone, humanHandoff: parsed.paused, stateStorage });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[Inbox] handoff update failed for phone=${maskPhone(phone)}: ${error}`);
+    await logInboxAction({
+      operator,
+      action: "handoff",
+      phone,
+      outcome: "error",
+      detail: `humanHandoff=${parsed.paused} update failed`,
+    });
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 }

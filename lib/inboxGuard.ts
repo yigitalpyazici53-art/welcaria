@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { isValidSession, readSessionCookie } from "./inboxAuth";
+import { readSession, readSessionCookie } from "./inboxAuth";
+import type { OperatorIdentity } from "./inboxOperators";
 
 // ── Per-route inbox guards ────────────────────────────────────────────────────
 //
@@ -12,13 +13,33 @@ import { isValidSession, readSessionCookie } from "./inboxAuth";
 // redirect-to-login UX and to reject unauthenticated traffic early.
 
 /**
- * Returns a 401 response when the request has no valid inbox session, or null
- * when the caller may proceed. Fails closed (see isValidSession).
+ * Result of a guard: either the authenticated operator, or the response to
+ * return. A discriminated union rather than `NextResponse | null` so a handler
+ * cannot reach the action without having gone through the identity check — the
+ * operator is only obtainable from a successful guard, and every audit line is
+ * written from it. Fails closed (see readSession).
  */
-export async function requireInboxSession(req: Request): Promise<NextResponse | null> {
+export type InboxAuthResult =
+  | { ok: true; operator: OperatorIdentity }
+  | { ok: false; response: NextResponse };
+
+function unauthorized(): InboxAuthResult {
+  return {
+    ok: false,
+    response: NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }),
+  };
+}
+
+/**
+ * Authenticates the request and returns the acting operator. Callers must use the
+ * returned identity when logging the action (lib/inboxAudit.ts) — that pairing is
+ * what makes inbox access attributable under KVKK.
+ */
+export async function requireInboxSession(req: Request): Promise<InboxAuthResult> {
   const token = readSessionCookie(req);
-  if (await isValidSession(token)) return null;
-  return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const operator = await readSession(token);
+  if (!operator) return unauthorized();
+  return { ok: true, operator };
 }
 
 /**
@@ -59,6 +80,10 @@ export function enforceSameOrigin(req: Request): NextResponse | null {
 }
 
 /** Session + CSRF check for mutating routes, in the order they should run. */
-export async function requireInboxMutation(req: Request): Promise<NextResponse | null> {
-  return (await requireInboxSession(req)) ?? enforceSameOrigin(req);
+export async function requireInboxMutation(req: Request): Promise<InboxAuthResult> {
+  const session = await requireInboxSession(req);
+  if (!session.ok) return session;
+  const crossOrigin = enforceSameOrigin(req);
+  if (crossOrigin) return { ok: false, response: crossOrigin };
+  return session;
 }

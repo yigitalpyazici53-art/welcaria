@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRedis } from "@/lib/redis";
 import { requireInboxSession } from "@/lib/inboxGuard";
+import { logInboxAction } from "@/lib/inboxAudit";
 import type { ConversationState } from "@/lib/conversationState";
 
 // Conversation-list for the pilot inbox. Authenticated by this handler itself
@@ -25,8 +26,9 @@ interface ConversationSummary {
 }
 
 export async function GET(req: Request): Promise<NextResponse> {
-  const unauthorized = await requireInboxSession(req);
-  if (unauthorized) return unauthorized;
+  const auth = await requireInboxSession(req);
+  if (!auth.ok) return auth.response;
+  const { operator } = auth;
 
   const r = getRedis();
   if (!r) {
@@ -56,10 +58,17 @@ export async function GET(req: Request): Promise<NextResponse> {
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[Inbox] conversation SCAN failed:", error);
+    await logInboxAction({
+      operator,
+      action: "list_conversations",
+      outcome: "error",
+      detail: "conversation SCAN failed",
+    });
     return NextResponse.json({ ok: false, error }, { status: 500 });
   }
 
   if (keys.length === 0) {
+    await logInboxAction({ operator, action: "list_conversations", detail: "0 conversations" });
     return NextResponse.json({ ok: true, conversations: [], stateStorage: "redis" });
   }
 
@@ -70,6 +79,12 @@ export async function GET(req: Request): Promise<NextResponse> {
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[Inbox] conversation MGET failed:", error);
+    await logInboxAction({
+      operator,
+      action: "list_conversations",
+      outcome: "error",
+      detail: "conversation MGET failed",
+    });
     return NextResponse.json({ ok: false, error }, { status: 500 });
   }
 
@@ -99,6 +114,14 @@ export async function GET(req: Request): Promise<NextResponse> {
 
   // Newest first when timestamps are present (untimestamped keys sort last).
   conversations.sort((a, b) => (b.lastUpdated ?? 0) - (a.lastUpdated ?? 0));
+
+  // Listing exposes every active patient thread, so it is an access event in its
+  // own right. The count is recorded rather than the numbers themselves.
+  await logInboxAction({
+    operator,
+    action: "list_conversations",
+    detail: `${conversations.length} conversations`,
+  });
 
   return NextResponse.json({
     ok: true,

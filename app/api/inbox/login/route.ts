@@ -2,16 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   INBOX_COOKIE,
   INBOX_SESSION_MAX_AGE_S,
+  LEGACY_SHARED_IDENTITY,
   issueSession,
 } from "@/lib/inboxAuth";
+import {
+  authenticateOperator,
+  hasOperatorRegistry,
+  type OperatorIdentity,
+} from "@/lib/inboxOperators";
+import { logInboxAction } from "@/lib/inboxAudit";
 import { secretsMatch } from "@/lib/secretCompare";
 import { getRedis } from "@/lib/redis";
 
-// Password gate for the pilot inbox. On a correct password this issues a random
-// session token, stores it in Redis (TTL 12h), and sets it as an HttpOnly cookie;
-// middleware.ts and every route handler validate that token on each request. This
-// route is deliberately exempt from the middleware guard (otherwise you could
-// never log in).
+// Login gate for the pilot inbox. On correct credentials this issues a random
+// session token, stores it in Redis (TTL 12h) bound to the authenticated
+// operator, and sets it as an HttpOnly cookie; middleware.ts and every route
+// handler validate that token on each request. This route is deliberately exempt
+// from the middleware guard (otherwise you could never log in).
+//
+// IDENTITY (O-6). Credentials are per-operator: { operatorId, password } checked
+// against the INBOX_OPERATORS registry (lib/inboxOperators.ts). The old single
+// shared INBOX_PASSWORD is accepted ONLY while no operator registry is
+// configured, so deploying this change does not lock the clinic out; once
+// INBOX_OPERATORS is set, the shared password stops working entirely and every
+// session is attributable to a named person.
 //
 // Brute-force protection, all checked BEFORE the password comparison:
 //   - per-IP:  5 attempts / 15 min, keyed on the platform-trusted client IP
@@ -54,10 +68,13 @@ function globalFailureKey(now: number): string {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const configured = process.env.INBOX_PASSWORD;
-  if (!configured) {
+  // Per-operator registry is the primary credential source; the shared password
+  // is the transitional fallback and is ignored once operators exist.
+  const registryConfigured = hasOperatorRegistry();
+  const sharedPassword = process.env.INBOX_PASSWORD;
+  if (!registryConfigured && !sharedPassword) {
     return NextResponse.json(
-      { ok: false, error: "INBOX_PASSWORD not configured on server" },
+      { ok: false, error: "No inbox operators configured on server (INBOX_OPERATORS)" },
       { status: 500 }
     );
   }
@@ -111,14 +128,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  let parsed: { password?: string };
+  let parsed: { operatorId?: string; password?: string };
   try {
     parsed = await req.json();
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!secretsMatch(parsed.password, configured)) {
+  // ── Credential check ───────────────────────────────────────────────────────
+  let identity: OperatorIdentity | null = null;
+  if (registryConfigured) {
+    identity = await authenticateOperator(parsed.operatorId, parsed.password);
+  } else if (sharedPassword && secretsMatch(parsed.password, sharedPassword)) {
+    identity = LEGACY_SHARED_IDENTITY;
+    console.warn(
+      "[InboxLogin] shared-password login — set INBOX_OPERATORS so inbox actions are attributable (O-6)"
+    );
+  }
+
+  if (!identity) {
     try {
       const key = globalFailureKey(now);
       const failures = await r.incr(key);
@@ -126,13 +154,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     } catch {
       // Counting is best-effort; the refusal below is what matters.
     }
+    // A failed attempt is part of the access trail. The submitted operatorId is
+    // echoed only as `detail` and never trusted as an identity — the entry is
+    // attributed to no one, which is exactly what happened.
+    const attempted =
+      typeof parsed.operatorId === "string" ? parsed.operatorId.trim().slice(0, 64) : "";
+    await logInboxAction({
+      operator: { operatorId: "-", name: "(unauthenticated)" },
+      action: "login_failed",
+      outcome: "denied",
+      detail: attempted ? `attempted operatorId=${attempted}` : "no operatorId supplied",
+    });
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   // ── Create a random, server-issued session in Redis ─────────────────────────
   let token: string;
   try {
-    token = await issueSession();
+    token = await issueSession(identity);
   } catch (err) {
     console.error(
       "[InboxLogin] failed to persist session:",
@@ -144,7 +183,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const res = NextResponse.json({ ok: true });
+  await logInboxAction({ operator: identity, action: "login" });
+
+  const res = NextResponse.json({ ok: true, operator: identity });
   res.cookies.set(INBOX_COOKIE, token, {
     httpOnly: true,
     // Strict, not Lax: Lax still attaches the cookie to same-SITE requests, and

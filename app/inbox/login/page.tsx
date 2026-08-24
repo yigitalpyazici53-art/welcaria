@@ -26,6 +26,11 @@ const C = {
 };
 
 export default function InboxLogin() {
+  // Operator ID is what makes an inbox action attributable (O-6). It is optional
+  // in the form only so a deployment that has not yet set INBOX_OPERATORS can
+  // still sign in with the legacy shared password; once operators are configured
+  // the server rejects a blank id.
+  const [operatorId, setOperatorId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -39,7 +44,7 @@ export default function InboxLogin() {
       const res = await fetch("/api/inbox/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ operatorId: operatorId.trim(), password }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
@@ -49,7 +54,7 @@ export default function InboxLogin() {
       }
       setError(
         res.status === 401
-          ? "Incorrect password. Please try again."
+          ? "Incorrect operator ID or password. Please try again."
           : data.error || "Login failed. Please try again."
       );
     } catch {
@@ -110,6 +115,44 @@ export default function InboxLogin() {
 
         <form onSubmit={onSubmit}>
           <label
+            htmlFor="inbox-operator"
+            style={{
+              display: "block",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              color: C.text,
+              marginBottom: "0.5rem",
+            }}
+          >
+            Operator ID
+          </label>
+          <input
+            id="inbox-operator"
+            type="text"
+            autoFocus
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={operatorId}
+            onChange={(e) => setOperatorId(e.target.value)}
+            placeholder="e.g. ayse"
+            style={{
+              width: "100%",
+              padding: "0.7rem 0.85rem",
+              marginBottom: "1rem",
+              fontSize: "0.925rem",
+              fontFamily: "inherit",
+              color: C.text,
+              background: C.bg,
+              border: `1px solid ${C.border}`,
+              borderRadius: "10px",
+              outline: "none",
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = C.teal)}
+            onBlur={(e) => (e.currentTarget.style.borderColor = C.border)}
+          />
+
+          <label
             htmlFor="inbox-password"
             style={{
               display: "block",
@@ -124,7 +167,6 @@ export default function InboxLogin() {
           <input
             id="inbox-password"
             type="password"
-            autoFocus
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -198,7 +240,8 @@ export default function InboxLogin() {
             lineHeight: 1.5,
           }}
         >
-          Authorized clinic staff only. Sessions expire after 12 hours.
+          Authorized clinic staff only. Sessions expire after 12 hours. Inbox
+          activity is logged against your operator ID.
         </p>
       </div>
     </div>

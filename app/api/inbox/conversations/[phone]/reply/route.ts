@@ -4,6 +4,7 @@ import { addToHistory, getStateStorageMode } from "@/lib/conversationState";
 import type { ComplianceDecision } from "@/lib/compliance";
 import { maskPhone } from "@/lib/sanitize";
 import { requireInboxMutation } from "@/lib/inboxGuard";
+import { logInboxAction } from "@/lib/inboxAudit";
 
 // Manual owner reply for the pilot inbox. Authenticated by this handler itself
 // (session + Origin), with middleware.ts as an outer perimeter.
@@ -40,8 +41,9 @@ export async function POST(
 ): Promise<NextResponse> {
   // Session + Origin: this sends a WhatsApp message to a patient, so a
   // cookie-bearing request driven by another origin must never reach it.
-  const blocked = await requireInboxMutation(req);
-  if (blocked) return blocked;
+  const auth = await requireInboxMutation(req);
+  if (!auth.ok) return auth.response;
+  const { operator } = auth;
 
   const { phone: raw } = await params;
   const phone = decodeURIComponent(raw ?? "").trim();
@@ -79,6 +81,13 @@ export async function POST(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[Inbox] manual reply send threw for ${maskPhone(phone)}:`, error);
+    await logInboxAction({
+      operator,
+      action: "reply",
+      phone,
+      outcome: "error",
+      detail: "send threw",
+    });
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 
@@ -88,6 +97,13 @@ export async function POST(
     console.warn(
       `[Inbox] manual reply not sent to ${maskPhone(phone)} decision=${result.decision}${result.error ? ` error=${result.error}` : ""}`
     );
+    await logInboxAction({
+      operator,
+      action: "reply",
+      phone,
+      outcome: isTransport ? "error" : "denied",
+      detail: `not sent, decision=${result.decision}`,
+    });
     return NextResponse.json(
       {
         ok: false,
@@ -114,6 +130,15 @@ export async function POST(
       err instanceof Error ? err.message : err
     );
   }
+
+  // Message length only — the body itself is patient-facing clinical content and
+  // has no business being duplicated into an access log.
+  await logInboxAction({
+    operator,
+    action: "reply",
+    phone,
+    detail: `sent, ${body.length} chars, decision=${result.decision}`,
+  });
 
   console.log(`[Inbox] manual reply sent to ${maskPhone(phone)} (kind=system)`);
   return NextResponse.json({

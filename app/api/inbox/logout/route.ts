@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { INBOX_COOKIE, destroySession, readSessionCookie } from "@/lib/inboxAuth";
+import { INBOX_COOKIE, destroySession, readSession, readSessionCookie } from "@/lib/inboxAuth";
 import { enforceSameOrigin } from "@/lib/inboxGuard";
+import { logInboxAction } from "@/lib/inboxAudit";
 
 // Ends the caller's inbox session: deletes the token from Redis so it cannot be
 // replayed, then clears the cookie. Without this there was no way to end a
@@ -17,7 +18,14 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (blocked) return blocked;
 
   const token = readSessionCookie(req);
+  // Resolve the operator BEFORE the token is destroyed, so the audit trail records
+  // who signed out. A stale/expired cookie resolves to null and is simply not
+  // logged — there is no session to attribute, and the cookie is still cleared.
+  const operator = await readSession(token);
   await destroySession(token);
+  if (operator) {
+    await logInboxAction({ operator, action: "logout" });
+  }
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set(INBOX_COOKIE, "", {

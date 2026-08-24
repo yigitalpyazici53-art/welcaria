@@ -1,14 +1,21 @@
 // ── Inbox session store (pilot) ───────────────────────────────────────────────
 //
-// A single shared password (INBOX_PASSWORD) still gates login, but the session
-// itself is an opaque RANDOM token, not a deterministic hash of the password.
-// On successful login the route issues a token and stores `inbox:session:<token>`
-// in Redis with a 12h TTL; the token is the cookie value. Nothing derivable from
-// the password is placed in the cookie, and there is no way to forge a valid
-// cookie without the server-issued random token.
+// Login is per-operator (see lib/inboxOperators.ts); the session itself is an
+// opaque RANDOM token, not a deterministic hash of any credential. On successful
+// login the route issues a token and stores `inbox:session:<token>` in Redis with
+// a 12h TTL; the token is the cookie value. Nothing derivable from the password is
+// placed in the cookie, and there is no way to forge a valid cookie without the
+// server-issued random token.
+//
+// IDENTITY. The Redis value holds the authenticated operator
+// ({ operatorId, name, issuedAt }), so every guarded request resolves to a named
+// person without a second lookup and without putting the identity in the cookie,
+// where the operator could edit it. Sessions written before this change stored a
+// bare timestamp string; those decode to LEGACY_SHARED_IDENTITY instead of being
+// rejected, so the rollout does not log anyone out mid-shift.
 //
 // REVOCATION. Two levels, because a random Redis token is not invalidated by
-// rotating INBOX_PASSWORD (a common and dangerous assumption during an incident:
+// rotating a password (a common and dangerous assumption during an incident:
 // the operator rotates the password, believes access is cut, and the attacker's
 // cookie keeps working until its TTL expires):
 //
@@ -26,8 +33,23 @@
 // global for the same reason.
 
 import { getRedis } from "./redis";
+// Type-only: this module also runs in the Edge middleware runtime, and
+// lib/inboxOperators.ts pulls in node:crypto. `import type` is erased at compile
+// time, so nothing from it reaches the middleware bundle.
+import type { OperatorIdentity } from "./inboxOperators";
 
 export const INBOX_COOKIE = "inbox_session";
+
+/**
+ * Identity used for sessions that predate the per-operator registry, and for
+ * logins that still use the legacy shared INBOX_PASSWORD. Explicit rather than
+ * blank so those actions show up in the audit log as *unattributable* instead of
+ * quietly resembling a named operator.
+ */
+export const LEGACY_SHARED_IDENTITY: OperatorIdentity = {
+  operatorId: "shared-legacy",
+  name: "Shared password (pre-O-6)",
+};
 
 // 12h session — short enough for a pilot, long enough to avoid re-login churn.
 // Also used as the Redis TTL for the session key.
@@ -66,51 +88,118 @@ function normalizeEpoch(raw: unknown): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }
 
+interface StoredSession {
+  operatorId: string;
+  name: string;
+  issuedAt: number;
+}
+
 /**
- * Issue and persist a new session, returning the cookie value. The token carries
- * the epoch it was minted under so a later bump can invalidate it without any
- * per-session bookkeeping. Throws when Redis is unavailable — sessions require it.
+ * Decode a stored session value into the operator it belongs to.
+ *
+ * Two shapes are accepted, and that is deliberate:
+ *   - the current JSON `{ operatorId, name, issuedAt }`, and
+ *   - the pre-O-6 bare timestamp string ("1750000000000"), which maps to
+ *     LEGACY_SHARED_IDENTITY so already-issued cookies keep working.
+ * The Upstash client may hand back an already-parsed object, so both a string and
+ * an object are handled. Anything unrecognisable returns null (treated as
+ * invalid), never a fabricated identity.
  */
-export async function issueSession(): Promise<string> {
+function decodeSession(raw: unknown): OperatorIdentity | null {
+  if (raw === null || raw === undefined) return null;
+
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null;
+    // Legacy value: the millisecond timestamp of issue, nothing else.
+    if (/^\d+$/.test(trimmed)) return LEGACY_SHARED_IDENTITY;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "number") return LEGACY_SHARED_IDENTITY;
+
+  const parsed = value as Partial<StoredSession> | null;
+  if (
+    parsed &&
+    typeof parsed.operatorId === "string" &&
+    parsed.operatorId.length > 0 &&
+    typeof parsed.name === "string"
+  ) {
+    return { operatorId: parsed.operatorId, name: parsed.name };
+  }
+  return null;
+}
+
+/**
+ * Issue and persist a new session for `operator`, returning the cookie value. The
+ * token carries the epoch it was minted under so a later bump can invalidate it
+ * without any per-session bookkeeping; the Redis value carries the operator so
+ * every later request knows who is acting. Throws when Redis is unavailable —
+ * sessions require it.
+ */
+export async function issueSession(operator: OperatorIdentity): Promise<string> {
   const r = getRedis();
   if (!r) throw new Error("Redis not configured — inbox sessions require Redis");
   const epoch = await readEpoch();
   const token = `v1.${epoch}.${randomHex()}`;
-  await r.set(sessionKey(token), String(Date.now()), { ex: INBOX_SESSION_MAX_AGE_S });
+  const value: StoredSession = {
+    operatorId: operator.operatorId,
+    name: operator.name,
+    issuedAt: Date.now(),
+  };
+  await r.set(sessionKey(token), JSON.stringify(value), { ex: INBOX_SESSION_MAX_AGE_S });
   return token;
 }
 
 /**
- * A session is valid only when ALL of these hold:
+ * Resolve a token to the operator it belongs to, or null when the session is not
+ * valid. A session is valid only when ALL of these hold:
  *   - the token is well-formed,
  *   - its Redis key exists (not expired, not individually revoked),
- *   - the epoch embedded in it equals the current revocation epoch.
+ *   - the epoch embedded in it equals the current revocation epoch,
+ *   - the stored value decodes to an identity.
  *
- * Fails CLOSED: a missing/malformed token, a missing key, a stale epoch, or any
- * Redis error all return false. Session key and epoch are read in a single MGET
- * so this stays one round trip — it runs on every guarded request.
+ * Fails CLOSED: a missing/malformed token, a missing key, a stale epoch, an
+ * undecodable value, or any Redis error all return null. Session key and epoch are
+ * read in a single MGET so this stays one round trip — it runs on every guarded
+ * request.
  */
-export async function isValidSession(token: string | undefined | null): Promise<boolean> {
-  if (!token) return false;
+export async function readSession(
+  token: string | undefined | null
+): Promise<OperatorIdentity | null> {
+  if (!token) return null;
 
   const match = TOKEN_PATTERN.exec(token);
-  if (!match) return false;
+  if (!match) return null;
   const tokenEpoch = Number(match[1]);
 
   const r = getRedis();
-  if (!r) return false;
+  if (!r) return null;
 
   try {
     const [sessionValue, epochRaw] = (await r.mget(sessionKey(token), EPOCH_KEY)) as unknown[];
-    if (sessionValue === null || sessionValue === undefined) return false;
-    return tokenEpoch === normalizeEpoch(epochRaw);
+    if (sessionValue === null || sessionValue === undefined) return null;
+    if (tokenEpoch !== normalizeEpoch(epochRaw)) return null;
+    return decodeSession(sessionValue);
   } catch (err) {
     console.error(
       "[InboxAuth] session lookup failed (failing closed):",
       err instanceof Error ? err.message : err
     );
-    return false;
+    return null;
   }
+}
+
+/**
+ * Boolean form of readSession, for callers that only gate access and do not need
+ * the identity (middleware.ts). Same fail-closed behaviour.
+ */
+export async function isValidSession(token: string | undefined | null): Promise<boolean> {
+  return (await readSession(token)) !== null;
 }
 
 /** Revoke a single session (logout). Best-effort; a missing key is a no-op. */
@@ -127,8 +216,8 @@ export async function destroySession(token: string | undefined | null): Promise<
 
 /**
  * Revoke EVERY outstanding session by bumping the epoch. Returns the new epoch.
- * Use this after a suspected password leak — rotating INBOX_PASSWORD alone does
- * NOT invalidate sessions that were already issued.
+ * Use this after a suspected credential leak — rotating a password (shared or
+ * per-operator) alone does NOT invalidate sessions that were already issued.
  */
 export async function revokeAllSessions(): Promise<number> {
   const r = getRedis();
