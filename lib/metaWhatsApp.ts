@@ -20,6 +20,17 @@ export class MetaWhatsAppError extends Error {
   }
 }
 
+/**
+ * Thrown before any request is made because the Cloud API credentials are missing.
+ * Distinct from MetaWhatsAppError so callers can tell "provably nothing was sent".
+ */
+export class MetaNotConfiguredError extends Error {
+  constructor() {
+    super("META_WHATSAPP_TOKEN and META_WHATSAPP_PHONE_NUMBER_ID must be set to send WhatsApp messages");
+    this.name = "MetaNotConfiguredError";
+  }
+}
+
 // Shared Cloud API plumbing for both message types. `payload` is everything after
 // messaging_product/to — i.e. the type-specific part of the body.
 async function postMessage(
@@ -32,9 +43,7 @@ async function postMessage(
   const version = process.env.META_GRAPH_API_VERSION ?? "v21.0";
 
   if (!token || !phoneNumberId) {
-    throw new Error(
-      "META_WHATSAPP_TOKEN and META_WHATSAPP_PHONE_NUMBER_ID must be set to send WhatsApp messages"
-    );
+    throw new MetaNotConfiguredError();
   }
 
   const url = `https://graph.facebook.com/${version}/${phoneNumberId}/messages`;

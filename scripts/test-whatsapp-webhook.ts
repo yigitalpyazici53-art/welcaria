@@ -12,6 +12,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { assertNoLiveCredentials } from "./liveTestGuard";
 
 // ── Load .env.local before any lib module reads process.env ──────────────────
 const envFile = path.join(process.cwd(), ".env.local");
@@ -35,6 +36,9 @@ if (fs.existsSync(envFile)) {
 } else {
   console.warn("WARNING: .env.local not found — using existing environment\n");
 }
+
+// Abort before any lib import if live credentials are present (see liveTestGuard.ts).
+assertNoLiveCredentials("test-whatsapp");
 
 // ── Safe to import lib modules now ────────────────────────────────────────────
 import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest, deleteConversationState } from "../lib/conversationState";

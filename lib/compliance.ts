@@ -1,4 +1,5 @@
 import { getRedis } from "./redis";
+import { envOrUndefined } from "./env";
 import { maskPhone } from "./sanitize";
 
 // ── Meta ban-protection / compliance layer ────────────────────────────────────
@@ -29,6 +30,8 @@ export type ComplianceDecision =
   | "BLOCKED_WINDOW_CLOSED"
   | "BLOCKED_NO_INBOUND_HISTORY"
   | "BLOCKED_TEMPLATE_NOT_CONFIGURED"
+  | "BLOCKED_TEMPLATE_ALREADY_SENT"
+  | "BLOCKED_TEMPLATE_TOO_OLD"
   | "RATE_LIMITED"
   | "CIRCUIT_OPEN";
 
@@ -82,11 +85,22 @@ export function getInactivityNudgeDays(): number {
   return envNumber("COMPLIANCE_INACTIVITY_NUDGE_DAYS", 10, 1);
 }
 
+/**
+ * Oldest a patient's last inbound message may be for a follow-up template to go out.
+ * Empty, non-numeric, zero or negative → the 30-day default.
+ */
+export function getTemplateMaxAgeDays(): number {
+  const raw = process.env.TEMPLATE_MAX_AGE_DAYS?.trim();
+  if (!raw) return 30;
+  const v = Number(raw);
+  return Number.isFinite(v) && v > 0 ? v : 30;
+}
+
 /** Single-tenant deployments: the tenant is the clinic's WhatsApp number identity. */
 export function getDefaultTenantId(): string {
   return (
-    process.env.META_WHATSAPP_PHONE_NUMBER_ID ??
-    process.env.TWILIO_PHONE_NUMBER ??
+    envOrUndefined("META_WHATSAPP_PHONE_NUMBER_ID") ??
+    envOrUndefined("TWILIO_PHONE_NUMBER") ??
     "default"
   );
 }
@@ -178,6 +192,9 @@ function lastInboundKey(thread: string): string {
 }
 function threadSendKey(thread: string): string {
   return `${P}threadSend:${thread}`;
+}
+function followupTemplateKey(thread: string): string {
+  return `${P}followupTemplateSentAt:${thread}`;
 }
 function qualityKey(tenantId: string): string {
   return `${P}quality:${tenantId}`;
@@ -346,6 +363,9 @@ export async function recordInboundMessage(
 ): Promise<void> {
   const ttlSeconds = Math.ceil((getWindowMs() * 3) / 1000);
   await kvSet(lastInboundKey(thread), String(at), ttlSeconds);
+  // The patient wrote again: the silence the last follow-up template answered is over,
+  // so the next silence may get one follow-up of its own.
+  await kvDel(followupTemplateKey(thread));
   const meta = await getThreadSendMeta(thread);
   await setThreadSendMeta(thread, {
     lastSendAt: meta.lastSendAt, // pacing floor persists across inbound turns
@@ -605,8 +625,8 @@ export async function complianceGate(params: GateParams): Promise<GateResult> {
   //    `template` bypasses it for a different reason: it is sent precisely when
   //    the window has CLOSED, so totalSinceInbound still holds the counters from
   //    the last inbound burst and would reject every template. Template spam is
-  //    prevented at the trigger instead — one template per thread, enforced by
-  //    the caller's state flag (see sendTemplate in lib/outboundSend.ts).
+  //    prevented by sendTemplate() itself (lib/outboundSend.ts): one template per
+  //    thread per silence period, via the atomic claimFollowupTemplate() flag.
   const meta = await getThreadSendMeta(thread);
   if (kind === "bot_reply" && meta.botRepliesSinceInbound >= 1) {
     await log("RATE_LIMITED", "max 1 bot reply per inbound patient message");
@@ -671,6 +691,65 @@ export async function handleAccountLevelWebhook(
   if (next) {
     await setQualityState(tenantId, next, `webhook:${field}`);
   }
+}
+
+// ── One follow-up template per silence period ────────────────────────────────
+//
+// compliance:followupTemplateSentAt:<thread> holds the time a follow-up template was
+// claimed for this thread. recordInboundMessage() deletes it, so the rule is "at most
+// one template per stretch of patient silence". The TTL outlives the template age limit,
+// so the flag cannot expire while a template to the same silence is still permitted.
+
+function followupTemplateTtlSeconds(): number {
+  return Math.ceil((getTemplateMaxAgeDays() + 1) * 24 * 60 * 60);
+}
+
+export async function getFollowupTemplateSentAt(thread: string): Promise<number | null> {
+  const raw = await kvGet(followupTemplateKey(thread));
+  if (!raw) return null;
+  const ts = Number(raw);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/**
+ * Atomically claims the follow-up template slot for a thread. Returns true for exactly
+ * one caller; every concurrent or later caller gets false until the next inbound message.
+ *
+ * With Redis this is SET NX, which is atomic across instances. Without Redis (or on a
+ * Redis error) it falls back to the in-process map, where check-and-set runs without an
+ * await in between and is therefore atomic within this process. A claim already present
+ * in the memory mirror (a Redis write that failed earlier) also counts as taken, so the
+ * fallback can only err toward NOT sending.
+ */
+export async function claimFollowupTemplate(thread: string, at: number): Promise<boolean> {
+  const key = followupTemplateKey(thread);
+  const ttl = followupTemplateTtlSeconds();
+  const memClaim = (): boolean => {
+    if (memGet(key) !== null) return false;
+    memSet(key, String(at), ttl);
+    return true;
+  };
+
+  if (memGet(key) !== null) return false;
+  const r = getRedis();
+  if (!r) return memClaim();
+  try {
+    const result = await r.set(key, String(at), { nx: true, ex: ttl });
+    if (result === null) return false;
+    memSet(key, String(at), ttl);
+    return true;
+  } catch (err) {
+    console.error(
+      "[Compliance] Redis SET NX failed, falling back to memory claim:",
+      err instanceof Error ? err.message : err
+    );
+    return memClaim();
+  }
+}
+
+/** Gives back a claim whose template was provably NOT sent (gate block / Meta rejection). */
+export async function releaseFollowupTemplate(thread: string): Promise<void> {
+  await kvDel(followupTemplateKey(thread));
 }
 
 // ── KVKK erasure ────────────────────────────────────────────────────────────
@@ -776,7 +855,7 @@ async function deleteThreadFromComplianceLog(
 
 /**
  * Delete everything the compliance layer holds about one patient: the per-thread
- * keys (lastInbound + threadSend) across every transport key variant (bare,
+ * keys (lastInbound + threadSend + followupTemplateSentAt) across every transport key variant (bare,
  * "+"-prefixed, and "whatsapp:" forms) the same way deleteConversationState
  * does, plus that thread's entries in the shared audit log. Tenant-level keys
  * (quality, breaker, bucket, activity) are intentionally NOT touched — they are
@@ -792,7 +871,7 @@ export async function deleteComplianceForThread(
 
   const keys: string[] = [];
   for (const v of variants) {
-    keys.push(lastInboundKey(v), threadSendKey(v));
+    keys.push(lastInboundKey(v), threadSendKey(v), followupTemplateKey(v));
   }
 
   for (const key of keys) memKv.delete(key);

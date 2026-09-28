@@ -1,44 +1,45 @@
 import { bookingLinkText, SUPPORTED_LANGUAGES } from "./localization";
+import { envOrUndefined } from "./env";
 
 export const clinicConfig = {
-  name:           process.env.CLINIC_NAME            ?? "the clinic",
-  primaryService: process.env.CLINIC_PRIMARY_SERVICE ?? "laser hair removal",
-  defaultLocation:process.env.CLINIC_DEFAULT_LOCATION ?? "",
-  bookingUrl:     process.env.CLINIC_BOOKING_URL      ?? "",
+  name:           envOrUndefined("CLINIC_NAME")            ?? "the clinic",
+  primaryService: envOrUndefined("CLINIC_PRIMARY_SERVICE") ?? "laser hair removal",
+  defaultLocation:envOrUndefined("CLINIC_DEFAULT_LOCATION") ?? "",
+  bookingUrl:     envOrUndefined("CLINIC_BOOKING_URL")      ?? "",
   bookingLinkMessage:
-    process.env.CLINIC_BOOKING_LINK_MESSAGE ??
+    envOrUndefined("CLINIC_BOOKING_LINK_MESSAGE") ??
     "You can complete your appointment request here: {url}",
   bookingLinkMessageTr:
-    process.env.CLINIC_BOOKING_LINK_MESSAGE_TR ??
+    envOrUndefined("CLINIC_BOOKING_LINK_MESSAGE_TR") ??
     "Randevu talebinizi buradan tamamlayabilirsiniz: {url}",
-  ownerEmail:     process.env.OWNER_EMAIL             ?? "",
+  ownerEmail:     envOrUndefined("OWNER_EMAIL")             ?? "",
   // Starting prices — clinic-approved guidance only. Leave empty to use safe pricing fallback.
   startingPrices: {
-    laser:         process.env.STARTING_PRICE_LASER            ?? "",
-    hairTransplant:process.env.STARTING_PRICE_HAIR_TRANSPLANT  ?? "",
-    dental:        process.env.STARTING_PRICE_DENTAL           ?? "",
+    laser:         envOrUndefined("STARTING_PRICE_LASER")            ?? "",
+    hairTransplant:envOrUndefined("STARTING_PRICE_HAIR_TRANSPLANT")  ?? "",
+    dental:        envOrUndefined("STARTING_PRICE_DENTAL")           ?? "",
   },
   // Device/technology brands shown when patient asks. Comma-separated list.
-  deviceBrands: process.env.CLINIC_DEVICE_BRANDS ?? "",
+  deviceBrands: envOrUndefined("CLINIC_DEVICE_BRANDS") ?? "",
   // Working hours, free-form clinic-approved text (e.g. "Pazartesi-Cumartesi 09:00-19:00,
   // Pazar kapalı"). Deliberately has NO fallback string: when it is empty the bot must say
   // the team will confirm the hours, never guess a schedule. Read at call time via
   // getWorkingHours() — see the note on getBookingUrl() below.
-  workingHours: process.env.CLINIC_HOURS ?? "",
+  workingHours: envOrUndefined("CLINIC_HOURS") ?? "",
   // Location and transportation — shared when patient asks for directions.
   locationInfo: {
-    address:          process.env.CLINIC_ADDRESS           ?? "",
-    district:         process.env.CLINIC_DISTRICT          ?? "",
-    googleMapsLink:   process.env.CLINIC_MAPS_LINK         ?? "",
-    nearestTransport: process.env.CLINIC_NEAREST_TRANSPORT ?? "",
-    parkingAvailable: process.env.CLINIC_PARKING           ?? "",
-    airportTransfer:  process.env.CLINIC_AIRPORT_TRANSFER  ?? "",
+    address:          envOrUndefined("CLINIC_ADDRESS")           ?? "",
+    district:         envOrUndefined("CLINIC_DISTRICT")          ?? "",
+    googleMapsLink:   envOrUndefined("CLINIC_MAPS_LINK")         ?? "",
+    nearestTransport: envOrUndefined("CLINIC_NEAREST_TRANSPORT") ?? "",
+    parkingAvailable: envOrUndefined("CLINIC_PARKING")           ?? "",
+    airportTransfer:  envOrUndefined("CLINIC_AIRPORT_TRANSFER")  ?? "",
   },
   // Pre-treatment notes — generic clinic-approved info only. No medical advice.
   preTreatmentInstructions: {
-    laser:         process.env.PRE_TREATMENT_LASER            ?? "",
-    hairTransplant:process.env.PRE_TREATMENT_HAIR_TRANSPLANT  ?? "",
-    dental:        process.env.PRE_TREATMENT_DENTAL           ?? "",
+    laser:         envOrUndefined("PRE_TREATMENT_LASER")            ?? "",
+    hairTransplant:envOrUndefined("PRE_TREATMENT_HAIR_TRANSPLANT")  ?? "",
+    dental:        envOrUndefined("PRE_TREATMENT_DENTAL")           ?? "",
   },
   // Channel capabilities. Instagram DM is a future channel — not yet live.
   channelCapabilities: {
@@ -55,7 +56,7 @@ export const clinicConfig = {
 // which silently disabled the booking-link handoff even though CLINIC_BOOKING_URL was
 // configured. Trimmed so stray whitespace never makes the guard truthy-but-broken.
 export function getBookingUrl(): string {
-  return process.env.CLINIC_BOOKING_URL?.trim() ?? "";
+  return envOrUndefined("CLINIC_BOOKING_URL")?.trim() ?? "";
 }
 
 /**
@@ -66,7 +67,7 @@ export function getBookingUrl(): string {
  * response instead of inventing a schedule.
  */
 export function getWorkingHours(): string {
-  return process.env.CLINIC_HOURS?.trim() ?? "";
+  return envOrUndefined("CLINIC_HOURS")?.trim() ?? "";
 }
 
 // Maps a conversation service category to that vertical's configured starting price.

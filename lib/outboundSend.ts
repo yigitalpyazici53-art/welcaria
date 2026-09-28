@@ -1,11 +1,20 @@
 import {
+  claimFollowupTemplate,
   complianceGate,
   getDefaultTenantId,
+  getLastInboundAt,
+  getTemplateMaxAgeDays,
   logCompliance,
   recordActivity,
+  releaseFollowupTemplate,
 } from "./compliance";
 import type { ComplianceDecision, GateChannel, OutboundKind } from "./compliance";
-import { sendWhatsAppText, sendWhatsAppTemplate } from "./metaWhatsApp";
+import {
+  MetaNotConfiguredError,
+  MetaWhatsAppError,
+  sendWhatsAppText,
+  sendWhatsAppTemplate,
+} from "./metaWhatsApp";
 import { sendSms } from "./twilio";
 import { sanitizeSmsText } from "./sanitize";
 
@@ -155,12 +164,20 @@ export interface TemplateSendOptions {
  * still apply, so a template can never be used to cold-message someone who never wrote
  * to the clinic.
  *
- * Refuses with BLOCKED_TEMPLATE_NOT_CONFIGURED when TEMPLATE_NAME_FOLLOWUP is unset.
- * That is a configuration state, not a compliance failure: the caller should treat it as
- * "the clinic has no approved template yet" and leave the thread alone.
+ * Refusals specific to templates, checked before the gate:
+ *   - BLOCKED_TEMPLATE_NOT_CONFIGURED: TEMPLATE_NAME_FOLLOWUP is unset. A configuration
+ *     state ("no approved template yet"), not a compliance failure.
+ *   - BLOCKED_TEMPLATE_TOO_OLD: the patient's last inbound message is older than
+ *     TEMPLATE_MAX_AGE_DAYS (default 30).
+ *   - BLOCKED_TEMPLATE_ALREADY_SENT: this thread already got its follow-up template since
+ *     the patient last wrote. Enforced here with an atomic claim
+ *     (claimFollowupTemplate, SET NX), so two concurrent calls cannot both send; the
+ *     claim is cleared when the patient writes again (recordInboundMessage).
  *
- * Callers are responsible for not sending the same template to the same thread twice —
- * the per-inbound cap does not apply here (see complianceGate step 4).
+ * The claim is taken BEFORE the transport call and is given back only when the template
+ * provably did not go out (gate refusal, Meta rejected the request, credentials missing).
+ * On an ambiguous failure (network error, timeout) it is kept: a possible missed
+ * follow-up is preferred over a possible duplicate.
  */
 export async function sendTemplate(
   to: string,
@@ -184,6 +201,41 @@ export async function sendTemplate(
     return { sent: false, decision: "BLOCKED_TEMPLATE_NOT_CONFIGURED", bodyIntact: false };
   }
 
+  const now = options.now ?? Date.now();
+  const refuse = async (
+    decision: ComplianceDecision,
+    detail: string
+  ): Promise<OutboundResult> => {
+    await logCompliance({
+      ts: new Date(now).toISOString(),
+      event: decision,
+      tenantId,
+      thread,
+      kind: "template",
+      channel: "meta",
+      detail,
+    });
+    return { sent: false, decision, bodyIntact: false };
+  };
+
+  // No inbound history at all is left to the gate, which reports it as the
+  // inbound-only violation it is.
+  const lastInboundAt = await getLastInboundAt(thread);
+  const maxAgeDays = getTemplateMaxAgeDays();
+  if (lastInboundAt !== null && now - lastInboundAt > maxAgeDays * 24 * 60 * 60 * 1000) {
+    return refuse(
+      "BLOCKED_TEMPLATE_TOO_OLD",
+      `last inbound message is older than TEMPLATE_MAX_AGE_DAYS (${maxAgeDays})`
+    );
+  }
+
+  if (!(await claimFollowupTemplate(thread, now))) {
+    return refuse(
+      "BLOCKED_TEMPLATE_ALREADY_SENT",
+      "a follow-up template was already sent to this thread since its last inbound message"
+    );
+  }
+
   const gate = await complianceGate({
     tenantId,
     thread,
@@ -193,6 +245,7 @@ export async function sendTemplate(
     sleep: options.sleep,
   });
   if (!gate.allowed) {
+    await releaseFollowupTemplate(thread);
     return { sent: false, decision: gate.decision, bodyIntact: false };
   }
 
@@ -203,6 +256,9 @@ export async function sendTemplate(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Outbound] template send failed (${templateName}/${language}):`, message);
+    if (err instanceof MetaWhatsAppError || err instanceof MetaNotConfiguredError) {
+      await releaseFollowupTemplate(thread);
+    }
     return { sent: false, decision: gate.decision, error: message, bodyIntact: false };
   }
 

@@ -421,7 +421,14 @@ const HOURS_INQUIRY_PATTERNS: RegExp[] = [
   // German / French / Spanish / Russian / Arabic
   /öffnungszeiten|geöffnet|wann\s*(?:haben|sind)\s*sie\s*(?:ge[öo]ffnet|offen)/i,
   /horaires?\s*d(?:'|e\s*l')ouverture|heures?\s*d'ouverture|[êe]tes[- ]vous\s*ouvert|ouvert\s*le\s/i,
-  /horario\s*(?:de\s*(?:atenci[oó]n|apertura))?|est[aá]n?\s*abiertos?|a\s*qu[eé]\s*hora\s*(?:abren|cierran)/i,
+  // Spanish: never a bare "horario" — "¿qué horario tienen libre para la cita?" is
+  // appointment availability, not opening hours.
+  /qu[eé]\s*horarios?\s*(?:tienen|tiene|manejan)\b(?!\s*(?:libres?|disponibles?))/i,
+  /horarios?\s*de\s*(?:atenci[oó]n|apertura|trabajo)/i,
+  /cu[aá]l\s*es\s*(?:el|su)\s*horario\b(?!\s*(?:libres?|disponibles?))/i,
+  /est[aá]n?\s*abiert[oa]s?/i,
+  /a\s*qu[eé]\s*hora\s*(?:abren|abre|cierran|cierra)\b/i,
+  /\babren\s*(?:los\s*|el\s*)?(?:s[aá]bados?|domingos?|fines?\s*de\s*semana)/i,
   /часы\s*работы|график\s*работы|когда\s*(?:вы\s*)?(?:работаете|открыты)/i,
   /ساعات\s*العمل|مواعيد\s*العمل|متى\s*تفتح/i,
 ];

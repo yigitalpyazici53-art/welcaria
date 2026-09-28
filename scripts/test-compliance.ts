@@ -36,10 +36,14 @@ import {
   getLastActivityAt,
   checkInactivityNudges,
   recordActivity,
+  getFollowupTemplateSentAt,
+  getTemplateMaxAgeDays,
+  deleteComplianceForThread,
   _resetComplianceForTest,
   type TokenBucketState,
 } from "../lib/compliance";
 import { sendOutbound, sendTemplate } from "../lib/outboundSend";
+import { MetaWhatsAppError } from "../lib/metaWhatsApp";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -416,9 +420,12 @@ async function main() {
     assertEqual("template body params passed through", tmplCalls[0]?.params.join(","), "Aurea");
     assertTrue("template never claims bodyIntact", !tmpl.bodyIntact);
 
-    // 11d. Circuit breaker outranks templates.
+    // 11d. Circuit breaker outranks templates — and a gate refusal gives the
+    //      one-template claim back, so the thread is not burned by a block.
+    const brThread = "+905551110044";
+    await recordInboundMessage(brThread, "t-tmpl", NOW - 48 * HOUR);
     await setManualBreaker("t-tmpl", true);
-    const breakered = await sendTemplate(thread, "welcaria_followup", {
+    const breakered = await sendTemplate(brThread, "welcaria_followup", {
       tenantId: "t-tmpl",
       now: NOW,
       sleep: async () => {},
@@ -426,7 +433,126 @@ async function main() {
     });
     assertEqual("circuit breaker blocks templates too", breakered.decision, "CIRCUIT_OPEN");
     assertTrue("circuit-open template never reached the transport", tmplCalls.length === 1);
+    assertTrue(
+      "gate refusal releases the one-template claim",
+      (await getFollowupTemplateSentAt(brThread)) === null
+    );
     await setManualBreaker("t-tmpl", false);
+
+    // 11e. One template per thread: the thread from 11c already got one.
+    const second = await sendTemplate(thread, "welcaria_followup", {
+      tenantId: "t-tmpl",
+      now: NOW + HOUR,
+      sleep: async () => {},
+      transport: tmplTransport,
+    });
+    assertEqual("second template to the same thread → refused", second.decision, "BLOCKED_TEMPLATE_ALREADY_SENT");
+    assertTrue("second template never reached the transport", tmplCalls.length === 1);
+    assertTrue("followupTemplateSentAt recorded", (await getFollowupTemplateSentAt(thread)) === NOW);
+
+    // 11f. Patient writes again → flag cleared → the NEXT silence may get one follow-up.
+    await recordInboundMessage(thread, "t-tmpl", NOW + 2 * HOUR);
+    assertTrue("new inbound clears followupTemplateSentAt", (await getFollowupTemplateSentAt(thread)) === null);
+    const afterReply = await sendTemplate(thread, "welcaria_followup", {
+      tenantId: "t-tmpl",
+      now: NOW + 30 * HOUR,
+      sleep: async () => {},
+      transport: tmplTransport,
+    });
+    assertEqual("template allowed again after a new inbound + silence", afterReply.decision, "ALLOWED");
+    assertTrue("post-reset template reached the transport", tmplCalls.length === 2);
+  }
+
+  // ── 11b. Template concurrency, age limit, release, erasure ─────────────────
+  console.log("\n11b. Template concurrency / age limit / erasure");
+  await _resetComplianceForTest();
+  {
+    const tmplOpts = (calls: string[]) => ({
+      tenantId: "t-tmpl2",
+      now: NOW,
+      sleep: async () => {},
+      transport: async (to: string) => {
+        calls.push(to);
+      },
+    });
+
+    // Concurrency: two simultaneous calls → exactly one template goes out.
+    const cThread = "+905551110055";
+    const cCalls: string[] = [];
+    await recordInboundMessage(cThread, "t-tmpl2", NOW - 48 * HOUR);
+    const [a, b] = await Promise.all([
+      sendTemplate(cThread, "welcaria_followup", tmplOpts(cCalls)),
+      sendTemplate(cThread, "welcaria_followup", tmplOpts(cCalls)),
+    ]);
+    assertEqual("concurrent template calls → exactly one sent", [a, b].filter((r) => r.sent).length, 1);
+    assertTrue(
+      "the other concurrent call is BLOCKED_TEMPLATE_ALREADY_SENT",
+      [a.decision, b.decision].includes("BLOCKED_TEMPLATE_ALREADY_SENT")
+    );
+    assertEqual("concurrent calls → one transport invocation", cCalls.length, 1);
+
+    // Age limit: default 30 days.
+    const oldThread = "+905551110066";
+    const oCalls: string[] = [];
+    await recordInboundMessage(oldThread, "t-tmpl2", NOW - 31 * 24 * HOUR);
+    const tooOld = await sendTemplate(oldThread, "welcaria_followup", tmplOpts(oCalls));
+    assertEqual("last inbound 31 days ago → BLOCKED_TEMPLATE_TOO_OLD", tooOld.decision, "BLOCKED_TEMPLATE_TOO_OLD");
+    assertTrue("too-old template never reached the transport", oCalls.length === 0);
+    assertTrue("too-old refusal takes no claim", (await getFollowupTemplateSentAt(oldThread)) === null);
+
+    const okThread = "+905551110067";
+    await recordInboundMessage(okThread, "t-tmpl2", NOW - 29 * 24 * HOUR);
+    const withinAge = await sendTemplate(okThread, "welcaria_followup", tmplOpts(oCalls));
+    assertEqual("last inbound 29 days ago → allowed", withinAge.decision, "ALLOWED");
+
+    // Invalid / empty TEMPLATE_MAX_AGE_DAYS → default 30; a valid value is honoured.
+    const savedAge = process.env.TEMPLATE_MAX_AGE_DAYS;
+    for (const bad of ["", "   ", "abc", "0", "-5", "NaN"]) {
+      process.env.TEMPLATE_MAX_AGE_DAYS = bad;
+      assertEqual(`TEMPLATE_MAX_AGE_DAYS=${JSON.stringify(bad)} → default 30`, getTemplateMaxAgeDays(), 30);
+    }
+    process.env.TEMPLATE_MAX_AGE_DAYS = "7";
+    assertEqual("TEMPLATE_MAX_AGE_DAYS=7 honoured", getTemplateMaxAgeDays(), 7);
+    const weekThread = "+905551110068";
+    await recordInboundMessage(weekThread, "t-tmpl2", NOW - 10 * 24 * HOUR);
+    const pastWeek = await sendTemplate(weekThread, "welcaria_followup", tmplOpts(oCalls));
+    assertEqual("10-day-old inbound with limit 7 → TOO_OLD", pastWeek.decision, "BLOCKED_TEMPLATE_TOO_OLD");
+    if (savedAge === undefined) delete process.env.TEMPLATE_MAX_AGE_DAYS;
+    else process.env.TEMPLATE_MAX_AGE_DAYS = savedAge;
+
+    // Meta rejected the request → provably not sent → claim released.
+    const rejThread = "+905551110077";
+    await recordInboundMessage(rejThread, "t-tmpl2", NOW - 48 * HOUR);
+    const rejected = await sendTemplate(rejThread, "welcaria_followup", {
+      ...tmplOpts([]),
+      transport: async () => {
+        throw new MetaWhatsAppError(400, { message: "template name does not exist", code: 132001 });
+      },
+    });
+    assertTrue("Meta rejection → not sent", !rejected.sent);
+    assertTrue("Meta rejection releases the claim", (await getFollowupTemplateSentAt(rejThread)) === null);
+
+    // Ambiguous failure (network/timeout) → claim KEPT: prefer a missed follow-up
+    // over a possible duplicate.
+    const ambThread = "+905551110078";
+    await recordInboundMessage(ambThread, "t-tmpl2", NOW - 48 * HOUR);
+    const ambiguous = await sendTemplate(ambThread, "welcaria_followup", {
+      ...tmplOpts([]),
+      transport: async () => {
+        throw new Error("fetch failed: socket hang up");
+      },
+    });
+    assertTrue("ambiguous failure → reported not sent", !ambiguous.sent);
+    assertTrue("ambiguous failure keeps the claim", (await getFollowupTemplateSentAt(ambThread)) !== null);
+
+    // KVKK erasure removes the flag — for any spelling of the number.
+    assertTrue("flag present before erasure", (await getFollowupTemplateSentAt(cThread)) !== null);
+    const erased = await deleteComplianceForThread("905551110055");
+    assertTrue(
+      "erasure targets the followupTemplateSentAt key",
+      erased.keys.includes(`compliance:followupTemplateSentAt:${cThread}`)
+    );
+    assertTrue("erasure deletes followupTemplateSentAt", (await getFollowupTemplateSentAt(cThread)) === null);
   }
 
   // ── 12. Inactivity nudge (day-10 keepalive) ─────────────────────────────────

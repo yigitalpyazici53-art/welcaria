@@ -11,6 +11,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { assertNoLiveCredentials } from "./liveTestGuard";
 
 // ── Load .env.local before any lib module reads process.env ──────────────
 const envFile = path.join(process.cwd(), ".env.local");
@@ -35,6 +36,9 @@ if (fs.existsSync(envFile)) {
   console.warn("WARNING: .env.local not found -- using existing environment\n");
 }
 
+// Abort before any lib import if live credentials are present (see liveTestGuard.ts).
+assertNoLiveCredentials("test-sms");
+
 // ── Now safe to import lib modules (client is lazy-initialized) ──────────
 import { generateSmsReply, getAnthropicModel, DEFAULT_MODEL } from "../lib/anthropic";
 import { buildOwnerAlert, notifyOwner } from "../lib/twilio";
@@ -55,7 +59,10 @@ import {
 } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
-import { clinicConfig, formatBookingLinkMessage, getBookingUrl } from "../lib/clinicConfig";
+import { clinicConfig, formatBookingLinkMessage, getBookingUrl, getWorkingHours } from "../lib/clinicConfig";
+import { envOrUndefined } from "../lib/env";
+import { isHoursInquiry } from "../lib/slotExtractor";
+import { workingHoursReply } from "../lib/localization";
 import { handleBookingHandoff } from "../lib/bookingHandoff";
 import {
   SUPPORTED_LANGUAGES,
@@ -150,6 +157,11 @@ function assertContains(label: string, haystack: string, needle: string): void {
   } else {
     fail(label, `"${needle}" not found in "${haystack}"`);
   }
+}
+
+function assertTrue(label: string, condition: boolean): void {
+  if (condition) pass(label);
+  else fail(label, "expected true");
 }
 
 function assertNotContains(label: string, haystack: string, needle: string): void {
@@ -1638,6 +1650,74 @@ async function testClinicConfigNormalization(): Promise<void> {
   pass("CLINIC_PRIMARY_SERVICE drives pipeline service normalization and stage fallbacks");
 }
 
+// ── Working-hours question detection ─────────────────────────────────────
+
+function testHoursInquiryDetection(): void {
+  header("Working-hours question detection");
+
+  const hours: Array<[string, string]> = [
+    ["ES", "¿Qué horario tienen?"],
+    ["ES", "¿A qué hora abren?"],
+    ["ES", "¿Están abiertos el sábado?"],
+    ["ES", "¿Cuál es su horario de atención?"],
+    ["ES", "¿Abren los domingos?"],
+    ["TR", "Kaçta açılıyorsunuz?"],
+    ["TR", "Pazar açık mısınız?"],
+    ["EN", "What are your opening hours?"],
+  ];
+  for (const [lang, msg] of hours) {
+    assertEqual(`${lang} hours question detected: "${msg}"`, isHoursInquiry(msg), true);
+  }
+
+  const notHours: Array<[string, string]> = [
+    ["ES", "horario"],
+    ["ES", "Mi horario es complicado, ¿puedo ir por la tarde?"],
+    ["ES", "¿Qué horario tienen libre para la cita?"],
+    ["ES", "¿Cuál es el horario disponible el lunes?"],
+    ["TR", "Saat 14:00 uygun"],
+    ["TR", "Cumartesi gelebilir miyim?"],
+  ];
+  for (const [lang, msg] of notHours) {
+    assertEqual(`${lang} not an hours question: "${msg}"`, isHoursInquiry(msg), false);
+  }
+}
+
+// ── Empty env values are treated as unset ────────────────────────────────
+
+function testEmptyEnvAsUnset(): void {
+  header("Empty / whitespace env values fall back like unset ones");
+
+  const KEY = "__TEST_ENV_OR_UNDEFINED";
+  process.env[KEY] = "";
+  assertEqual("empty string → undefined", envOrUndefined(KEY), undefined);
+  process.env[KEY] = "   \t ";
+  assertEqual("whitespace-only → undefined", envOrUndefined(KEY), undefined);
+  process.env[KEY] = "  Aurea  ";
+  assertEqual("configured value returned untrimmed (unchanged behaviour)", envOrUndefined(KEY), "  Aurea  ");
+  delete process.env[KEY];
+  assertEqual("absent → undefined", envOrUndefined(KEY), undefined);
+
+  assertTrue("clinicConfig.name is never blank", clinicConfig.name.trim().length > 0);
+  assertTrue(
+    "Turkish booking-link template is never blank and keeps {url}",
+    clinicConfig.bookingLinkMessageTr.trim().length > 0 && clinicConfig.bookingLinkMessageTr.includes("{url}")
+  );
+
+  // getWorkingHours: blank must stay "" so the bot defers instead of inventing hours.
+  const saved = process.env.CLINIC_HOURS;
+  process.env.CLINIC_HOURS = "   ";
+  assertEqual("whitespace CLINIC_HOURS → no hours", getWorkingHours(), "");
+  assertContains(
+    "no hours → Turkish deferral, no invented schedule",
+    workingHoursReply(getWorkingHours(), "turkish"),
+    "en kısa sürede bilgilendireceğiz"
+  );
+  process.env.CLINIC_HOURS = "Pazartesi-Cumartesi 09:00-19:00, Pazar kapalı";
+  assertEqual("configured CLINIC_HOURS returned as-is", getWorkingHours(), "Pazartesi-Cumartesi 09:00-19:00, Pazar kapalı");
+  if (saved === undefined) delete process.env.CLINIC_HOURS;
+  else process.env.CLINIC_HOURS = saved;
+}
+
 // ── Welcome punctuation regression tests ─────────────────────────────────
 
 function testWelcomePunctuation(): void {
@@ -2932,6 +3012,8 @@ async function main() {
   await testLegacyStateMigration();
   testTreatmentAreaNormalization();
   testWelcomePunctuation();
+  testHoursInquiryDetection();
+  testEmptyEnvAsUnset();
   await testLanguageConsistency();
   await testQualificationFlows();
   await testAnthropicModelConfig();
