@@ -25,3 +25,7 @@ Usersyigitrapidflow-plumbing.env.local
 .claude/settings.local.json
 tsconfig.tsbuildinfo
 .env*
+
+# Agent instruction files re-created by `next dev` / agent tooling
+AGENTS.md
+CLAUDE.md

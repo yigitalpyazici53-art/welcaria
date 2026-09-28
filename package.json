@@ -15,6 +15,7 @@
     "test-daily-summary": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-daily-summary.ts",
     "test-nurabla": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-nurabla.ts",
     "test-compliance": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-compliance.ts",
+    "test-restaurant": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/test-restaurant.ts",
     "inbox-hash": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --project tsconfig.scripts.json scripts/hash-inbox-password.ts"
   },
   "dependencies": {

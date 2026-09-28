@@ -13,6 +13,7 @@ import { handleBookingHandoff } from "@/lib/bookingHandoff";
 import { isDuplicateMessage } from "@/lib/messageDedup";
 import { maskPhone } from "@/lib/sanitize";
 import { envOrUndefined } from "@/lib/env";
+import { completeRestaurantHandoff } from "@/lib/restaurant/handoff";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -289,6 +290,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             console.log(
               `[WhatsApp Webhook] reply sent=${replyResult.sent} decision=${replyResult.decision}`
             );
+
+            // ── Restaurant handoff (BUSINESS_TYPE=restaurant only) ────────────
+            // Runs AFTER the handoff reply so the customer is told first. Applied even
+            // when that reply was blocked: the request still reaches the owner and the
+            // bot stays quiet. Never set for clinic deployments.
+            if (result.requestHandoff) {
+              const handoff = await completeRestaurantHandoff({
+                from,
+                state: result.stateAfter,
+                tenantId,
+              });
+              console.log(
+                `[WhatsApp Webhook] restaurant handoff applied=${handoff.handoffApplied} ownerNotified=${handoff.ownerNotified} channel=${handoff.channel ?? "none"}`
+              );
+            }
 
             // ── Booking link handoff ──────────────────────────────────────────
             // Shared decision: runtime booking-URL read, safe diagnostic log, and the

@@ -42,6 +42,8 @@ import {
   workingHoursReply,
 } from "./localization";
 import { envOrUndefined } from "./env";
+import { isRestaurantMode } from "./businessType";
+import { runRestaurantConsentTurn, runRestaurantTurn } from "./restaurant/pipeline";
 
 // Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
 // extraction and prompting only need the head of the message.
@@ -197,6 +199,13 @@ export interface InboundPipelineResult {
    * must send `consentMessage` and skip the bot reply / booking handoff.
    */
   awaitingConsent: boolean;
+  /**
+   * Restaurant mode only (always false for clinics): this turn's reply hands the
+   * conversation to the business. The route must send the reply FIRST and then call
+   * completeRestaurantHandoff() (lib/restaurant/handoff.ts), which pauses the bot and
+   * alerts the owner.
+   */
+  requestHandoff: boolean;
   ownerAlertPreview: string | null;
   shouldNotifyOwner: boolean;
   shouldLogToSheet: boolean;
@@ -316,6 +325,7 @@ async function runConsentDisclosureTurn(
     assistantReply: "",
     consentMessage,
     awaitingConsent: true,
+    requestHandoff: false,
     ownerAlertPreview: isFirstInbound ? buildOwnerAlert(from, stateAfter) : null,
     shouldNotifyOwner: isFirstInbound,
     shouldLogToSheet: false,
@@ -351,8 +361,22 @@ export async function processInboundMessage(
   // call. While the disclosure is not confirmed sent, this turn produces the welcome +
   // disclosure and returns; the patient's text is neither classified, extracted,
   // persisted nor transferred. Normal processing resumes on the next turn.
+  //
+  // Restaurant mode shares the gate (same fail-closed rule, same consent record) and
+  // only swaps the disclosure text for a general personal-data notice with no health
+  // wording. BUSINESS_TYPE unset/empty → clinic, so existing deployments never enter
+  // either restaurant branch.
+  const restaurantMode = isRestaurantMode();
   if (!consentDisclosureConfirmed(stateBefore)) {
-    return runConsentDisclosureTurn(from, input, source, stateBefore, isFirstMessage);
+    return restaurantMode
+      ? runRestaurantConsentTurn(from, input, source, stateBefore, isFirstMessage)
+      : runConsentDisclosureTurn(from, input, source, stateBefore, isFirstMessage);
+  }
+
+  // Restaurant mode: the clinic qualification controller below (intent classifier,
+  // slot extraction, stage machine, clinic prompt) is bypassed entirely.
+  if (restaurantMode) {
+    return runRestaurantTurn(from, input, source, stateBefore, isFirstMessage);
   }
 
   const wasComplete = stateBefore.stage === "complete";
@@ -504,6 +528,7 @@ export async function processInboundMessage(
     assistantReply,
     consentMessage: null,
     awaitingConsent: false,
+    requestHandoff: false,
     ownerAlertPreview,
     shouldNotifyOwner,
     shouldLogToSheet,

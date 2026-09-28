@@ -66,7 +66,28 @@ export interface ConversationState {
   deviceInquiry?: boolean;
   preTreatmentInquiry?: boolean;
   detectedLanguage?: string;
+  // Restaurant mode (BUSINESS_TYPE=restaurant) only — never read or written by the
+  // clinic flow. updateState() drops undefined values, so "cleared" is written as
+  // "none" / "" rather than undefined. The reservation date/time are also mirrored
+  // into preferredDate/preferredTime so the inbox shows them without changes.
+  restaurantFlow?: "none" | "reservation";
+  reservationDate?: string;
+  reservationTime?: string;
+  reservationPartySize?: string;
+  reservationAwaiting?: "date" | "time" | "partySize" | "";
+  reservationStallTurns?: number;
+  restaurantHandoffReason?: RestaurantHandoffReason;
 }
+
+/** Why a restaurant conversation was handed to the business (owner alert + logs). */
+export type RestaurantHandoffReason =
+  | "reservation"
+  | "reservation_stalled"
+  | "info_missing"
+  | "info_not_configured"
+  | "order_not_configured"
+  | "ai_unavailable"
+  | "ungrounded_reply";
 
 const KEY_PREFIX = "conv:";
 const STATE_TTL_S = 24 * 60 * 60;

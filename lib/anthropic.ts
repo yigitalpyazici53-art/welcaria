@@ -148,3 +148,49 @@ export async function generateSmsReply(
   console.log("[Reply] generated (Claude):", finalText.slice(0, 80) + (finalText.length > 80 ? "..." : ""));
   return finalText;
 }
+
+/**
+ * Restaurant mode (BUSINESS_TYPE=restaurant): answers an information question from
+ * the restaurant's own text. Separate from generateSmsReply() so the clinic path is
+ * untouched. Same consent guarantee — only reachable after the KVKK gate. The caller
+ * applies redactPatientIdentifiers() (with the customer's WhatsApp number) to the
+ * returned text before it is sent or stored.
+ *
+ * Returns "" when the model produced no text; the caller hands off instead of replying.
+ * Throws when the key is missing or the API call fails — the caller hands off too.
+ */
+export async function generateRestaurantReply(
+  customerMessage: string,
+  state: ConversationState,
+  systemPrompt: string
+): Promise<string> {
+  if (!envOrUndefined("ANTHROPIC_API_KEY")) {
+    throw new Error("[Anthropic] ANTHROPIC_API_KEY is not set — AI replies are disabled");
+  }
+
+  const model = getAnthropicModel();
+  console.log(`[Reply] generating restaurant reply (Claude model: ${model})`);
+
+  const messages: Anthropic.Messages.MessageParam[] = [
+    ...state.history.slice(-6).map((h) => ({
+      role: h.role as "user" | "assistant",
+      content: h.content,
+    })),
+    { role: "user", content: customerMessage },
+  ];
+
+  const response = await getClient().messages.create({
+    model,
+    // Higher than the clinic cap: a menu answer may legitimately list several items.
+    max_tokens: 600,
+    system: systemPrompt,
+    messages,
+  });
+
+  const textBlock = response.content.find(
+    (b): b is Anthropic.Messages.TextBlock => b.type === "text"
+  );
+  // Identifier redaction and the no-invented-figures check run in the caller
+  // (lib/restaurant/pipeline.ts), on whatever this returns.
+  return sanitizeReplyText(textBlock ? textBlock.text.trim() : "");
+}

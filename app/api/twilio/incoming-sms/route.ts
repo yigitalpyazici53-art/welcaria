@@ -10,6 +10,8 @@ import {
   recordConsentDisclosureResult,
 } from "@/lib/inboundPipeline";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
+import { isRestaurantMode } from "@/lib/businessType";
+import { completeRestaurantHandoff } from "@/lib/restaurant/handoff";
 import { maskPhone } from "@/lib/sanitize";
 import { envOrUndefined } from "@/lib/env";
 
@@ -168,6 +170,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // the patient's message is only processed once they have been informed.
   if (result.awaitingConsent) {
     console.log("[SMS] awaiting consent disclosure — bot reply and booking handoff skipped");
+  } else if (isRestaurantMode() && result.stateAfter.humanHandoff === true) {
+    // Restaurant mode honours the handoff pause on this channel too (the pipeline
+    // produced no reply for a paused thread). Clinic behaviour here is unchanged.
+    console.log("[SMS] restaurant humanHandoff active — bot reply skipped");
   } else {
     const replyResult = await sendOutbound({
       to: from,
@@ -177,6 +183,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       threadKey: from,
     });
     console.log(`[SMS] reply sent=${replyResult.sent} decision=${replyResult.decision}`);
+
+    // Restaurant handoff (BUSINESS_TYPE=restaurant only) — after the reply, applied
+    // even if the reply was blocked. Same shared step as the Meta webhook.
+    if (result.requestHandoff) {
+      const handoff = await completeRestaurantHandoff({ from, state: result.stateAfter });
+      console.log(
+        `[SMS] restaurant handoff applied=${handoff.handoffApplied} ownerNotified=${handoff.ownerNotified} channel=${handoff.channel ?? "none"}`
+      );
+    }
 
     // ── 6. Booking link handoff ────────────────────────────────────────────
     // Runtime booking-URL read + skip/attempt/sent decision live in the shared handler
