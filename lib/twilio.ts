@@ -2,11 +2,12 @@ import twilio from "twilio";
 import { sanitizeSmsText, maskPhone } from "./sanitize";
 import { treatmentAreaLabel } from "./localization";
 import type { ConversationState } from "./conversationState";
+import { envOrUndefined } from "./env";
 
 function validateTwilioConfig(): { accountSid: string; authToken: string; fromNumber: string } {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+  const accountSid = envOrUndefined("TWILIO_ACCOUNT_SID");
+  const authToken = envOrUndefined("TWILIO_AUTH_TOKEN");
+  const fromNumber = envOrUndefined("TWILIO_PHONE_NUMBER");
 
   if (!accountSid) throw new Error("Missing TWILIO_ACCOUNT_SID");
   if (!authToken) throw new Error("Missing TWILIO_AUTH_TOKEN");
@@ -89,7 +90,7 @@ export async function notifyOwner(
   customerFrom: string,
   state: ConversationState
 ): Promise<void> {
-  const ownerPhone = process.env.OWNER_PHONE;
+  const ownerPhone = envOrUndefined("OWNER_PHONE");
   if (!ownerPhone) {
     const msg = "Missing OWNER_PHONE for owner notification";
     console.error(`[OwnerAlert ERROR] ${msg}`);

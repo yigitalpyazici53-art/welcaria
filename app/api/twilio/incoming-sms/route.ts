@@ -11,6 +11,7 @@ import {
 } from "@/lib/inboundPipeline";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
 import { maskPhone } from "@/lib/sanitize";
+import { envOrUndefined } from "@/lib/env";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
@@ -23,11 +24,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   {
     const missing: string[] = [];
-    if (!process.env.ANTHROPIC_API_KEY)   missing.push("ANTHROPIC_API_KEY");
-    if (!process.env.TWILIO_ACCOUNT_SID)  missing.push("TWILIO_ACCOUNT_SID");
-    if (!process.env.TWILIO_AUTH_TOKEN)   missing.push("TWILIO_AUTH_TOKEN");
-    if (!process.env.TWILIO_PHONE_NUMBER) missing.push("TWILIO_PHONE_NUMBER");
-    if (!process.env.OWNER_PHONE)         missing.push("OWNER_PHONE");
+    if (!envOrUndefined("ANTHROPIC_API_KEY"))   missing.push("ANTHROPIC_API_KEY");
+    if (!envOrUndefined("TWILIO_ACCOUNT_SID"))  missing.push("TWILIO_ACCOUNT_SID");
+    if (!envOrUndefined("TWILIO_AUTH_TOKEN"))   missing.push("TWILIO_AUTH_TOKEN");
+    if (!envOrUndefined("TWILIO_PHONE_NUMBER")) missing.push("TWILIO_PHONE_NUMBER");
+    if (!envOrUndefined("OWNER_PHONE"))         missing.push("OWNER_PHONE");
     if (missing.length > 0) {
       console.error("[SMS] MISSING ENV VARS:", missing.join(", "));
     } else {
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // an attacker-chosen `From`, writes conversation state for that number, opens
   // the 24h send window, and makes the clinic's Twilio account text whoever the
   // attacker names. See lib/twilioSignature.ts for the one explicit opt-out.
-  if (!isValidTwilioSignature(req, params, "[SMS]", process.env.WEBHOOK_URL)) {
+  if (!isValidTwilioSignature(req, params, "[SMS]", envOrUndefined("WEBHOOK_URL"))) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 

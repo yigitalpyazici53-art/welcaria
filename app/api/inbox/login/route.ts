@@ -13,6 +13,7 @@ import {
 import { logInboxAction } from "@/lib/inboxAudit";
 import { secretsMatch } from "@/lib/secretCompare";
 import { getRedis } from "@/lib/redis";
+import { envOrUndefined } from "@/lib/env";
 
 // Login gate for the pilot inbox. On correct credentials this issues a random
 // session token, stores it in Redis (TTL 12h) bound to the authenticated
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // Per-operator registry is the primary credential source; the shared password
   // is the transitional fallback and is ignored once operators exist.
   const registryConfigured = hasOperatorRegistry();
-  const sharedPassword = process.env.INBOX_PASSWORD;
+  const sharedPassword = envOrUndefined("INBOX_PASSWORD");
   if (!registryConfigured && !sharedPassword) {
     return NextResponse.json(
       { ok: false, error: "No inbox operators configured on server (INBOX_OPERATORS)" },

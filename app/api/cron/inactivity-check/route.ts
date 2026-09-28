@@ -4,6 +4,7 @@ import {
   getInactivityNudgeDays,
   listKnownTenants,
 } from "@/lib/compliance";
+import { envOrUndefined } from "@/lib/env";
 
 // Coexistence keepalive check: WhatsApp coexistence connections disconnect
 // after ~13–14 days of inactivity on the number. This cron flags tenants idle
@@ -12,7 +13,7 @@ import {
 // patients — an automated keepalive message would itself be a compliance risk.
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const authHeader = req.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = envOrUndefined("CRON_SECRET");
 
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });

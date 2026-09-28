@@ -6,10 +6,11 @@ import {
   buildEmailHtml,
   sendDailySummary,
 } from "@/lib/dailySummary";
+import { envOrUndefined } from "@/lib/env";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const authHeader  = req.headers.get("authorization");
-  const cronSecret  = process.env.CRON_SECRET;
+  const cronSecret  = envOrUndefined("CRON_SECRET");
 
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -52,8 +53,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const apiKey     = process.env.RESEND_API_KEY;
-  const ownerEmail = process.env.OWNER_EMAIL;
+  const apiKey     = envOrUndefined("RESEND_API_KEY");
+  const ownerEmail = envOrUndefined("OWNER_EMAIL");
 
   if (!apiKey || !ownerEmail) {
     const missing = [!apiKey && "RESEND_API_KEY", !ownerEmail && "OWNER_EMAIL"].filter(Boolean);

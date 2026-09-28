@@ -3,6 +3,7 @@ import { sendOutbound } from "@/lib/outboundSend";
 import { isValidTwilioSignature } from "@/lib/twilioSignature";
 import { sanitizeSmsText, maskPhone } from "@/lib/sanitize";
 import { logToSheet } from "@/lib/googleSheets";
+import { envOrUndefined } from "@/lib/env";
 
 const MISSED_CALL_SMS = sanitizeSmsText(
   "Merhaba! Aramanızı aldık ama şu an müsait olamadık. Size kısa süre içinde dönüş yapacağız. Nasıl yardımcı olabiliriz?"
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // the exact configured URL, and WEBHOOK_URL points at the /incoming-sms path,
   // so validating this route against it would reject every genuine call. Unset,
   // the URL is rebuilt from the request's forwarded host.
-  if (!isValidTwilioSignature(req, params, "[Voice]", process.env.TWILIO_VOICE_WEBHOOK_URL)) {
+  if (!isValidTwilioSignature(req, params, "[Voice]", envOrUndefined("TWILIO_VOICE_WEBHOOK_URL"))) {
     return new NextResponse("Forbidden", { status: 403 });
   }
   console.log(`[Voice] Sending missed-call SMS (${MISSED_CALL_SMS.length} chars): ${MISSED_CALL_SMS}`);

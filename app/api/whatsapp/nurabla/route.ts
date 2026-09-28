@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
 import { buildNurablaReply, NURABLA_FALLBACK } from "@/lib/businesses/nurabla";
 import { isValidTwilioSignature } from "@/lib/twilioSignature";
+import { envOrUndefined } from "@/lib/env";
 
 const { MessagingResponse } = twilio.twiml;
 
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // harmless" is a property of today's code, not a security boundary. Verifying
     // here means a future change that touches state or sends a message inherits
     // authentication instead of silently lacking it.
-    if (!isValidTwilioSignature(req, params, "[NURABLA]", process.env.NURABLA_WEBHOOK_URL)) {
+    if (!isValidTwilioSignature(req, params, "[NURABLA]", envOrUndefined("NURABLA_WEBHOOK_URL"))) {
       return new NextResponse("Forbidden", { status: 403 });
     }
 

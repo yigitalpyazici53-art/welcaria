@@ -1,4 +1,5 @@
 import { maskPhone } from "./sanitize";
+import { envOrUndefined } from "./env";
 
 export interface MetaApiError {
   message: string;
@@ -38,9 +39,9 @@ async function postMessage(
   payload: Record<string, unknown>,
   logLabel: string
 ): Promise<void> {
-  const token = process.env.META_WHATSAPP_TOKEN;
-  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
-  const version = process.env.META_GRAPH_API_VERSION ?? "v21.0";
+  const token = envOrUndefined("META_WHATSAPP_TOKEN");
+  const phoneNumberId = envOrUndefined("META_WHATSAPP_PHONE_NUMBER_ID");
+  const version = envOrUndefined("META_GRAPH_API_VERSION") ?? "v21.0";
 
   if (!token || !phoneNumberId) {
     throw new MetaNotConfiguredError();

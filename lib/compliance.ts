@@ -59,8 +59,8 @@ export type GateChannel = "meta" | "twilio_whatsapp" | "sms";
 // ── Env-configurable thresholds (safe defaults, read at call time) ────────────
 
 function envNumber(name: string, def: number, min = 0): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return def;
+  const raw = envOrUndefined(name);
+  if (raw === undefined) return def;
   const v = Number(raw);
   return Number.isFinite(v) && v >= min ? v : def;
 }
@@ -86,11 +86,22 @@ export function getInactivityNudgeDays(): number {
 }
 
 /**
- * Oldest a patient's last inbound message may be for a follow-up template to go out.
- * Empty, non-numeric, zero or negative → the 30-day default.
+ * How long the last-inbound timestamp is kept: 3× the customer-service window. It is
+ * the single source for that retention — the follow-up template flag derives its TTL
+ * from it, so changing one moves the other.
+ */
+export function getInboundRetentionMs(): number {
+  return getWindowMs() * 3;
+}
+
+/**
+ * Upper bound on the age of the patient's last inbound message for a follow-up template.
+ * Empty, non-numeric, zero or negative → the 30-day default. This only ever TIGHTENS the
+ * limit: once the last-inbound record expires (getInboundRetentionMs, 72h by default) a
+ * template is refused as BLOCKED_NO_INBOUND_HISTORY regardless of this value.
  */
 export function getTemplateMaxAgeDays(): number {
-  const raw = process.env.TEMPLATE_MAX_AGE_DAYS?.trim();
+  const raw = envOrUndefined("TEMPLATE_MAX_AGE_DAYS")?.trim();
   if (!raw) return 30;
   const v = Number(raw);
   return Number.isFinite(v) && v > 0 ? v : 30;
@@ -361,7 +372,7 @@ export async function recordInboundMessage(
   tenantId: string,
   at: number = Date.now()
 ): Promise<void> {
-  const ttlSeconds = Math.ceil((getWindowMs() * 3) / 1000);
+  const ttlSeconds = Math.ceil(getInboundRetentionMs() / 1000);
   await kvSet(lastInboundKey(thread), String(at), ttlSeconds);
   // The patient wrote again: the silence the last follow-up template answered is over,
   // so the next silence may get one follow-up of its own.
@@ -506,7 +517,7 @@ export async function setManualBreaker(tenantId: string, open: boolean): Promise
  * (or clearing the flags) closes it.
  */
 export async function isCircuitOpen(tenantId: string): Promise<boolean> {
-  if ((process.env.COMPLIANCE_FORCE_CIRCUIT_OPEN ?? "").toLowerCase() === "true") {
+  if ((envOrUndefined("COMPLIANCE_FORCE_CIRCUIT_OPEN") ?? "").toLowerCase() === "true") {
     return true;
   }
   if ((await kvGet(breakerKey(tenantId))) === "open") return true;
@@ -697,11 +708,19 @@ export async function handleAccountLevelWebhook(
 //
 // compliance:followupTemplateSentAt:<thread> holds the time a follow-up template was
 // claimed for this thread. recordInboundMessage() deletes it, so the rule is "at most
-// one template per stretch of patient silence". The TTL outlives the template age limit,
-// so the flag cannot expire while a template to the same silence is still permitted.
+// one template per stretch of patient silence".
+//
+// Retention is kept to the minimum that still enforces the rule: a template needs the
+// last-inbound record, so the flag only has to live as long as that record does. Its TTL
+// is the record's REMAINING lifetime plus a small margin — the flag expires together
+// with the record instead of holding the number for longer.
 
-function followupTemplateTtlSeconds(): number {
-  return Math.ceil((getTemplateMaxAgeDays() + 1) * 24 * 60 * 60);
+const FOLLOWUP_FLAG_MARGIN_MS = 60 * 60 * 1000;
+
+export function followupTemplateTtlSeconds(lastInboundAt: number | null, now: number): number {
+  const remainingMs =
+    lastInboundAt === null ? 0 : Math.max(0, lastInboundAt + getInboundRetentionMs() - now);
+  return Math.ceil((remainingMs + FOLLOWUP_FLAG_MARGIN_MS) / 1000);
 }
 
 export async function getFollowupTemplateSentAt(thread: string): Promise<number | null> {
@@ -721,9 +740,13 @@ export async function getFollowupTemplateSentAt(thread: string): Promise<number 
  * in the memory mirror (a Redis write that failed earlier) also counts as taken, so the
  * fallback can only err toward NOT sending.
  */
-export async function claimFollowupTemplate(thread: string, at: number): Promise<boolean> {
+export async function claimFollowupTemplate(
+  thread: string,
+  at: number,
+  lastInboundAt: number | null
+): Promise<boolean> {
   const key = followupTemplateKey(thread);
-  const ttl = followupTemplateTtlSeconds();
+  const ttl = followupTemplateTtlSeconds(lastInboundAt, at);
   const memClaim = (): boolean => {
     if (memGet(key) !== null) return false;
     memSet(key, String(at), ttl);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendOutbound } from "@/lib/outboundSend";
 import { secretsMatch } from "@/lib/secretCompare";
 import { isLocalDevelopment } from "@/lib/devGuard";
+import { envOrUndefined } from "@/lib/env";
 
 function maskToken(token: string | undefined): {
   hasToken: boolean;
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 1. Validate secret ───────────────────────────────────────────────────
-  const configuredSecret = process.env.TEST_WEBHOOK_SECRET;
+  const configuredSecret = envOrUndefined("TEST_WEBHOOK_SECRET");
   if (!configuredSecret) {
     return NextResponse.json(
       { ok: false, error: "TEST_WEBHOOK_SECRET not configured on server" },
@@ -60,9 +61,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 2. Build diagnostics (no secrets exposed) ────────────────────────────
-  const token = process.env.META_WHATSAPP_TOKEN;
-  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
-  const version = process.env.META_GRAPH_API_VERSION ?? "v21.0";
+  const token = envOrUndefined("META_WHATSAPP_TOKEN");
+  const phoneNumberId = envOrUndefined("META_WHATSAPP_PHONE_NUMBER_ID");
+  const version = envOrUndefined("META_GRAPH_API_VERSION") ?? "v21.0";
   const { hasToken, tokenLength, tokenPrefix, tokenSuffix } = maskToken(token);
 
   const diagnostics = {

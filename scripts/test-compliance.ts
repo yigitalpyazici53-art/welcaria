@@ -38,6 +38,9 @@ import {
   recordActivity,
   getFollowupTemplateSentAt,
   getTemplateMaxAgeDays,
+  getInboundRetentionMs,
+  getThreadMinGapMs,
+  followupTemplateTtlSeconds,
   deleteComplianceForThread,
   _resetComplianceForTest,
   type TokenBucketState,
@@ -544,6 +547,42 @@ async function main() {
     });
     assertTrue("ambiguous failure → reported not sent", !ambiguous.sent);
     assertTrue("ambiguous failure keeps the claim", (await getFollowupTemplateSentAt(ambThread)) !== null);
+
+    // Flag retention is aligned with the last-inbound record: it expires together with
+    // that record (+1h margin), and moves when the window setting moves.
+    assertEqual("inbound retention = 3× window (72h)", getInboundRetentionMs(), 72 * HOUR);
+    assertEqual(
+      "flag TTL = remaining inbound retention + 1h (inbound 48h ago → 25h)",
+      followupTemplateTtlSeconds(NOW - 48 * HOUR, NOW),
+      25 * 60 * 60
+    );
+    assertEqual(
+      "flag TTL with no inbound record = margin only (1h)",
+      followupTemplateTtlSeconds(null, NOW),
+      60 * 60
+    );
+    assertEqual(
+      "flag TTL never negative past the retention (margin only)",
+      followupTemplateTtlSeconds(NOW - 29 * 24 * HOUR, NOW),
+      60 * 60
+    );
+    const savedWindow = process.env.COMPLIANCE_WINDOW_HOURS;
+    process.env.COMPLIANCE_WINDOW_HOURS = "12";
+    assertEqual("retention follows the window (12h → 36h)", getInboundRetentionMs(), 36 * HOUR);
+    assertEqual(
+      "flag TTL follows the window (inbound 10h ago → 26h + 1h)",
+      followupTemplateTtlSeconds(NOW - 10 * HOUR, NOW),
+      27 * 60 * 60
+    );
+    if (savedWindow === undefined) delete process.env.COMPLIANCE_WINDOW_HOURS;
+    else process.env.COMPLIANCE_WINDOW_HOURS = savedWindow;
+
+    // Numeric thresholds: whitespace-only is unset (default), not 0.
+    const savedGap = process.env.COMPLIANCE_THREAD_MIN_GAP_SECONDS;
+    process.env.COMPLIANCE_THREAD_MIN_GAP_SECONDS = "   ";
+    assertEqual("whitespace COMPLIANCE_THREAD_MIN_GAP_SECONDS → default 3s", getThreadMinGapMs(), 3000);
+    if (savedGap === undefined) delete process.env.COMPLIANCE_THREAD_MIN_GAP_SECONDS;
+    else process.env.COMPLIANCE_THREAD_MIN_GAP_SECONDS = savedGap;
 
     // KVKK erasure removes the flag — for any spelling of the number.
     assertTrue("flag present before erasure", (await getFollowupTemplateSentAt(cThread)) !== null);

@@ -3,6 +3,7 @@ import { getStateStorageMode, deleteConversationState } from "@/lib/conversation
 import { secretsMatch } from "@/lib/secretCompare";
 import { maskPhone } from "@/lib/sanitize";
 import { isLocalDevelopment } from "@/lib/devGuard";
+import { envOrUndefined } from "@/lib/env";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 0. Local development only (allow-list, fails closed) ──────────────────
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 1. Validate secret ───────────────────────────────────────────────────
-  const configuredSecret = process.env.TEST_WEBHOOK_SECRET;
+  const configuredSecret = envOrUndefined("TEST_WEBHOOK_SECRET");
   if (!configuredSecret) {
     return NextResponse.json(
       { ok: false, error: "TEST_WEBHOOK_SECRET not configured on server" },

@@ -17,6 +17,7 @@ import {
 } from "./metaWhatsApp";
 import { sendSms } from "./twilio";
 import { sanitizeSmsText } from "./sanitize";
+import { envOrUndefined } from "./env";
 
 // ── The single mandatory outbound send path ───────────────────────────────────
 //
@@ -129,11 +130,11 @@ export async function sendOutbound(
 //   TEMPLATE_LANG_FOLLOWUP=tr                     (Meta language code; default "tr")
 
 export function getFollowupTemplateName(): string {
-  return process.env.TEMPLATE_NAME_FOLLOWUP?.trim() ?? "";
+  return envOrUndefined("TEMPLATE_NAME_FOLLOWUP")?.trim() ?? "";
 }
 
 export function getFollowupTemplateLanguage(): string {
-  const raw = process.env.TEMPLATE_LANG_FOLLOWUP?.trim();
+  const raw = envOrUndefined("TEMPLATE_LANG_FOLLOWUP")?.trim();
   return raw && raw.length > 0 ? raw : "tr";
 }
 
@@ -229,7 +230,7 @@ export async function sendTemplate(
     );
   }
 
-  if (!(await claimFollowupTemplate(thread, now))) {
+  if (!(await claimFollowupTemplate(thread, now, lastInboundAt))) {
     return refuse(
       "BLOCKED_TEMPLATE_ALREADY_SENT",
       "a follow-up template was already sent to this thread since its last inbound message"

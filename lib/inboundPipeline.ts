@@ -41,6 +41,7 @@ import {
   consentWelcome,
   workingHoursReply,
 } from "./localization";
+import { envOrUndefined } from "./env";
 
 // Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
 // extraction and prompting only need the head of the message.
@@ -435,7 +436,7 @@ export async function processInboundMessage(
     if (justCompleted) {
       // The completion message is sent exactly once — on the transition to complete.
       assistantReply = sanitizeReplyText(buildCompleteReply(stateUpdated));
-    } else if (process.env.ANTHROPIC_API_KEY) {
+    } else if (envOrUndefined("ANTHROPIC_API_KEY")) {
       try {
         assistantReply = await generateSmsReply(input, stateUpdated, {
           informationalTurn: informationalOnly && !postCompletion,

@@ -1611,6 +1611,70 @@ async function testApiScenarios(): Promise<void> {
     ["Salonunuzun adresi nerede?"],
     "Flow E: location question"
   );
+
+  await testApiHoursScenarios();
+}
+
+// Working-hours questions through the FULL pipeline (deterministic hours detection +
+// Claude). Configured hours must be copied verbatim; with CLINIC_HOURS empty the reply
+// must not contain any schedule at all. Neither case may start qualification.
+async function testApiHoursScenarios(): Promise<void> {
+  header("End-to-end Claude API: working-hours questions");
+
+  const HOURS = "Pazartesi-Cumartesi 09:00-19:00, Pazar kapalı";
+  const TIME_RE = /\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*(?:am|pm)\b/i;
+  const saved = process.env.CLINIC_HOURS;
+
+  const ask = async (phone: string, body: string) => {
+    await resetState(phone);
+    const r = await inbound({ from: phone, body, source: "sms" });
+    console.log(`  Message: "${body}"\n  Reply:   "${r.assistantReply}"`);
+    return r.assistantReply;
+  };
+  const noQualification = (label: string, reply: string) => {
+    for (const q of ["ilk kez", "ilk defa", "first time", "adınız", "your name"]) {
+      assertNotContains(`${label}: no qualification question ("${q}")`, reply, q);
+    }
+  };
+
+  try {
+    // ── CLINIC_HOURS configured ──
+    process.env.CLINIC_HOURS = HOURS;
+
+    const h1 = await ask("+905000000110", "Kaçta açıksınız?");
+    assertContains("H1 TR set: configured hours copied verbatim", h1, "09:00-19:00");
+    noQualification("H1 TR set", h1);
+
+    const h2 = await ask("+905000000111", "Pazar günü açık mısınız?");
+    assertContains("H2 TR set (Sunday): configured hours copied", h2, "09:00-19:00");
+    assertContains("H2 TR set (Sunday): says Sunday closed", h2, "Pazar kapalı");
+    noQualification("H2 TR set", h2);
+
+    const h3 = await ask("+905000000112", "Hi, what are your opening hours?");
+    assertContains("H3 EN set: configured hours copied verbatim", h3, "09:00-19:00");
+    noQualification("H3 EN set", h3);
+
+    // ── CLINIC_HOURS empty — must never invent a schedule ──
+    process.env.CLINIC_HOURS = "";
+
+    const e1 = await ask("+905000000113", "Kaçta açıksınız?");
+    assertTrue(`E1 TR empty: no invented time in "${e1}"`, !TIME_RE.test(e1));
+    assertNotContains("E1 TR empty: no invented weekday range", e1, "Pazartesi");
+    noQualification("E1 TR empty", e1);
+
+    const e2 = await ask("+905000000114", "Hangi günler açıksınız?");
+    assertTrue(`E2 TR empty (days): no invented time in "${e2}"`, !TIME_RE.test(e2));
+    assertNotContains("E2 TR empty: no invented weekday", e2, "Cumartesi");
+    noQualification("E2 TR empty", e2);
+
+    const e3 = await ask("+905000000115", "What are your opening hours?");
+    assertTrue(`E3 EN empty: no invented time in "${e3}"`, !TIME_RE.test(e3));
+    assertNotContains("E3 EN empty: no invented weekday range", e3, "Monday");
+    noQualification("E3 EN empty", e3);
+  } finally {
+    if (saved === undefined) delete process.env.CLINIC_HOURS;
+    else process.env.CLINIC_HOURS = saved;
+  }
 }
 
 // ── 16. Clinic config: primaryService normalization ───────────────────────

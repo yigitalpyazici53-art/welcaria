@@ -1,5 +1,6 @@
 import { getRedis } from "./redis";
 import { maskPhone } from "./sanitize";
+import { envOrUndefined } from "./env";
 
 export type Stage =
   | "collect_treatment_area"
@@ -243,8 +244,8 @@ export function getNextStage(state: ConversationState): Stage {
 
 export function hasRedisConfig(): boolean {
   return !!(
-    process.env.UPSTASH_REDIS_REST_URL &&
-    process.env.UPSTASH_REDIS_REST_TOKEN
+    envOrUndefined("UPSTASH_REDIS_REST_URL") &&
+    envOrUndefined("UPSTASH_REDIS_REST_TOKEN")
   );
 }
 

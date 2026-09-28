@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { readLeadsForDateRange } from "./googleSheets";
 import { clinicConfig } from "./clinicConfig";
 import { sanitizeSpreadsheetCell } from "./sanitize";
+import { envOrUndefined } from "./env";
 
 export interface LeadSummaryEntry {
   name: string;
@@ -157,9 +158,9 @@ ${summary.topLeads
 }
 
 export async function sendDailySummary(summary: DailySummary): Promise<void> {
-  const apiKey     = process.env.RESEND_API_KEY;
+  const apiKey     = envOrUndefined("RESEND_API_KEY");
   const ownerEmail = clinicConfig.ownerEmail;
-  const fromEmail  = process.env.RESEND_FROM_EMAIL ?? "RandevuFlow <onboarding@resend.dev>";
+  const fromEmail  = envOrUndefined("RESEND_FROM_EMAIL") ?? "RandevuFlow <onboarding@resend.dev>";
 
   if (!apiKey)      throw new Error("RESEND_API_KEY is not set");
   if (!ownerEmail)  throw new Error("OWNER_EMAIL is not set");

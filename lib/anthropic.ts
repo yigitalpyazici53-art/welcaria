@@ -61,6 +61,7 @@ import { sanitizeReplyText, ensureClinicNamePunctuation, redactPatientIdentifier
 import { clinicConfig } from "./clinicConfig";
 import { fallbackText } from "./localization";
 import type { ConversationState } from "./conversationState";
+import { envOrUndefined } from "./env";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
@@ -68,13 +69,13 @@ export const DEFAULT_MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
 function getClient(): Anthropic {
   if (!_client) {
-    _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    _client = new Anthropic({ apiKey: envOrUndefined("ANTHROPIC_API_KEY") });
   }
   return _client;
 }
 
 export function getAnthropicModel(): string {
-  return process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+  return envOrUndefined("ANTHROPIC_MODEL") ?? DEFAULT_MODEL;
 }
 
 export async function generateSmsReply(
@@ -82,7 +83,7 @@ export async function generateSmsReply(
   state: ConversationState,
   promptOptions?: PromptOptions
 ): Promise<string> {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!envOrUndefined("ANTHROPIC_API_KEY")) {
     throw new Error("[Anthropic] ANTHROPIC_API_KEY is not set — AI replies are disabled");
   }
 

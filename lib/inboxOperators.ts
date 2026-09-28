@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { promisify } from "util";
+import { envOrUndefined } from "./env";
 
 // ── Per-operator inbox identity registry (pilot) ──────────────────────────────
 //
@@ -161,7 +162,7 @@ function isNonEmptyString(v: unknown): v is string {
  * deploy) so scrypt-era logins do not re-parse on every attempt.
  */
 export function listOperators(): InboxOperator[] {
-  const raw = process.env.INBOX_OPERATORS?.trim() ?? "";
+  const raw = envOrUndefined("INBOX_OPERATORS")?.trim() ?? "";
   if (raw === cacheRaw) return cacheValue;
 
   const operators: InboxOperator[] = [];

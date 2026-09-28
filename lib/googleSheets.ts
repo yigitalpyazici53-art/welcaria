@@ -1,13 +1,14 @@
 import { google } from "googleapis";
 import { maskPhone, sanitizeSpreadsheetCell } from "./sanitize";
+import { envOrUndefined } from "./env";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
 function getAuth() {
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const privateKey = envOrUndefined("GOOGLE_PRIVATE_KEY")?.replace(/\\n/g, "\n");
 
   return new google.auth.JWT({
-    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    email: envOrUndefined("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
     key: privateKey,
     scopes: SCOPES,
   });
@@ -40,9 +41,9 @@ export interface LogToSheetResult {
 }
 
 export async function logToSheet(entry: LogEntry): Promise<LogToSheetResult> {
-  const sheetId = process.env.GOOGLE_SHEET_ID;
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY;
+  const sheetId = envOrUndefined("GOOGLE_SHEET_ID");
+  const email = envOrUndefined("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+  const key = envOrUndefined("GOOGLE_PRIVATE_KEY");
 
   if (!sheetId || !email || !key) {
     const missing = [
@@ -126,9 +127,9 @@ export interface DeleteLeadResult {
  * is column D (index 3): created_at | source | name | phone | ...
  */
 export async function deleteLeadFromSheets(phone: string): Promise<DeleteLeadResult> {
-  const sheetId = process.env.GOOGLE_SHEET_ID;
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY;
+  const sheetId = envOrUndefined("GOOGLE_SHEET_ID");
+  const email = envOrUndefined("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+  const key = envOrUndefined("GOOGLE_PRIVATE_KEY");
 
   if (!sheetId || !email || !key) {
     const missing = [
@@ -198,9 +199,9 @@ export async function deleteLeadFromSheets(phone: string): Promise<DeleteLeadRes
 }
 
 export async function readLeadsForDateRange(from: Date, to: Date): Promise<LogEntry[]> {
-  const sheetId = process.env.GOOGLE_SHEET_ID;
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY;
+  const sheetId = envOrUndefined("GOOGLE_SHEET_ID");
+  const email = envOrUndefined("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+  const key = envOrUndefined("GOOGLE_PRIVATE_KEY");
 
   if (!sheetId || !email || !key) {
     console.warn("[Sheets] readLeadsForDateRange: missing env vars, returning []");

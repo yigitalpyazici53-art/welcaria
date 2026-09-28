@@ -1,5 +1,6 @@
 import twilio from "twilio";
 import type { NextRequest } from "next/server";
+import { envOrUndefined } from "./env";
 
 // ── Shared Twilio webhook authentication ──────────────────────────────────────
 //
@@ -20,7 +21,7 @@ import type { NextRequest } from "next/server";
 // unnoticed in a deployed environment.
 
 function signatureCheckDisabled(): boolean {
-  if ((process.env.TWILIO_SIGNATURE_DISABLED ?? "").toLowerCase() !== "true") {
+  if ((envOrUndefined("TWILIO_SIGNATURE_DISABLED") ?? "").toLowerCase() !== "true") {
     return false;
   }
   // Never honour the kill switch on a production deployment.
@@ -70,7 +71,7 @@ export function isValidTwilioSignature(
     return true;
   }
 
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const authToken = envOrUndefined("TWILIO_AUTH_TOKEN");
   if (!authToken) {
     console.error(`${logPrefix} TWILIO_AUTH_TOKEN not set — cannot verify signature, rejecting`);
     return false;

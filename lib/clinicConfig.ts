@@ -45,7 +45,7 @@ export const clinicConfig = {
   channelCapabilities: {
     whatsapp:    true,
     sms:         true,
-    instagramDm: (process.env.INSTAGRAM_DM_ENABLED ?? "false") === "true",
+    instagramDm: (envOrUndefined("INSTAGRAM_DM_ENABLED") ?? "false") === "true",
   },
 };
 

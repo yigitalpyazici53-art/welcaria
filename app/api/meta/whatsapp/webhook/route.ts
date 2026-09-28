@@ -12,6 +12,7 @@ import { updateState } from "@/lib/conversationState";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
 import { isDuplicateMessage } from "@/lib/messageDedup";
 import { maskPhone } from "@/lib/sanitize";
+import { envOrUndefined } from "@/lib/env";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const verifyToken = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  const configuredToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
+  const configuredToken = envOrUndefined("META_WEBHOOK_VERIFY_TOKEN");
 
   if (!configuredToken) {
     console.error("[WhatsApp Webhook] META_WEBHOOK_VERIFY_TOKEN not configured");
@@ -108,7 +109,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
 // ── POST — Incoming WhatsApp messages ────────────────────────────────────────
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const appSecret = process.env.META_WHATSAPP_APP_SECRET;
+  const appSecret = envOrUndefined("META_WHATSAPP_APP_SECRET");
   if (!appSecret) {
     console.error("[WhatsApp Webhook] META_WHATSAPP_APP_SECRET not configured");
     return new NextResponse("Forbidden", { status: 403 });
