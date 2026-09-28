@@ -1,5 +1,5 @@
 import type { ConversationState, Stage } from "./conversationState";
-import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
+import { clinicConfig, getStartingPriceFor, getWorkingHours } from "./clinicConfig";
 import { sanitizeReplyText } from "./sanitize";
 import { turkishAblative } from "./localization";
 
@@ -11,6 +11,9 @@ export interface PromptOptions {
   // The lead was already captured before this message — answer follow-ups without
   // repeating the completion message or re-requesting contact details.
   postCompletion?: boolean;
+  // The patient asked about working hours on THIS turn (deterministic, decided in the
+  // pipeline). Drives the hours directive below.
+  hoursTurn?: boolean;
 }
 
 function buildClinicContextBlock(state: ConversationState): string {
@@ -67,6 +70,25 @@ function buildClinicContextBlock(state: ConversationState): string {
     );
   }
 
+  // Feature 8 — working hours. Read at call time via getWorkingHours(). Unlike the other
+  // fields, the NOT-configured case also emits an instruction: an unanswered hours
+  // question is the one a model is most tempted to fill in with a plausible-looking
+  // "09:00-18:00", and an invented schedule sends patients to a closed door.
+  const hours = getWorkingHours();
+  if (hours) {
+    parts.push(
+      `Clinic working hours: "${hours}". Share these when the patient asks when the clinic is open, which days it works, opening/closing time, or whether it is open on a specific day. ` +
+      `Copy the configured hours string exactly as written — never translate the day names, reformat the times, or restate them as a different schedule. ` +
+      `Do not turn it into a bullet list; state it in one natural sentence in the reply language. ` +
+      `These are opening hours, NOT appointment availability: never say a specific slot is free, and never confirm an appointment from them.`
+    );
+  } else {
+    parts.push(
+      `Clinic working hours are NOT configured. If the patient asks about opening hours, which days the clinic works, or whether it is open at a given time, you MUST NOT invent, guess, or imply any schedule — not even a "typical" one. ` +
+      `Reply that the team will confirm the working hours shortly (Turkish: "Çalışma saatlerimiz için sizi en kısa sürede bilgilendireceğiz."; English: "Our team will confirm our working hours for you shortly."), translated naturally into the reply language.`
+    );
+  }
+
   // Feature 7 — pre-treatment instructions (only when configured).
   // Vertical isolation: only the active vertical's note once the category is known.
   const pt = clinicConfig.preTreatmentInstructions;
@@ -107,6 +129,23 @@ function startingPriceDirective(state: ConversationState): string {
     `and that the final price depends on the exact treatment plan. ` +
     `Copy the configured starting-price string exactly as written. Do not localize its punctuation, currency symbol, spacing, or digit grouping. ` +
     `Then, in the same message: `
+  );
+}
+
+// Directive for a turn where the patient asked about working hours. Configured hours are
+// stated verbatim; with nothing configured the reply defers to the team. Either way the
+// model is told explicitly not to invent a schedule.
+function buildHoursDirective(): string {
+  const hours = getWorkingHours();
+  if (hours) {
+    return (
+      `The patient asked about the clinic's working hours. Begin the reply by stating them exactly as configured: "${hours}" — copied character for character, day names untranslated — phrased as one natural sentence in the reply language. ` +
+      `Do not present them as appointment availability and do not confirm any specific slot. `
+    );
+  }
+  return (
+    `The patient asked about the clinic's working hours and NO hours are configured. Do NOT state, guess, or imply any schedule. ` +
+    `Reply that the team will confirm the working hours shortly, in the reply language. `
   );
 }
 
@@ -178,7 +217,7 @@ const NEXT_FIELD_PROMPT: Record<Stage, string> = {
 
 // Directive for a purely informational turn: answer, do not qualify, leave open.
 const INFORMATIONAL_TASK =
-  "The patient's latest message is a purely informational question (location, directions, transfer, parking, devices, Instagram, or preparation). " +
+  "The patient's latest message is a purely informational question (location, directions, transfer, parking, devices, working hours, Instagram, or preparation). " +
   "Answer it using ONLY the Clinic context above (or the matching fallback rule). " +
   "Do NOT ask a qualification question, do NOT ask whether it is their first time, and do NOT ask for their name, phone, or preferred time in this reply. " +
   "End naturally and leave the conversation open.";
@@ -288,9 +327,16 @@ export function buildSystemPrompt(state: ConversationState, options?: PromptOpti
 
   const priceDirective = options?.informationalTurn || options?.postCompletion ? "" : startingPriceDirective(state);
 
+  // Deterministic hours directive — same role as startingPriceDirective: the pipeline,
+  // not the model, decides that this turn is an hours question, so the configured value
+  // (or the safe deferral) is guaranteed to be in the answer. Applies on informational
+  // and post-completion turns too, because "kaçta açıksınız?" is a valid question at any
+  // point in the conversation.
+  const hoursDirective = options?.hoursTurn ? buildHoursDirective() : "";
+
   // Context block is built per call (not at module load) so clinic config reads stay
   // current and the block is testable without re-importing the module.
-  return `${BASE_PROMPT}${buildClinicContextBlock(state)}${knownSection}${guardSection}\nNext step: ${priceDirective}${nextTask}`;
+  return `${BASE_PROMPT}${buildClinicContextBlock(state)}${knownSection}${guardSection}\nNext step: ${hoursDirective}${priceDirective}${nextTask}`;
 }
 
 // Legacy export — keeps any remaining static import from breaking

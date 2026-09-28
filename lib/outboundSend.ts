@@ -5,7 +5,7 @@ import {
   recordActivity,
 } from "./compliance";
 import type { ComplianceDecision, GateChannel, OutboundKind } from "./compliance";
-import { sendWhatsAppText } from "./metaWhatsApp";
+import { sendWhatsAppText, sendWhatsAppTemplate } from "./metaWhatsApp";
 import { sendSms } from "./twilio";
 import { sanitizeSmsText } from "./sanitize";
 
@@ -108,24 +108,108 @@ export async function sendOutbound(
   return { sent: true, decision: gate.decision, bodyIntact: transmitsBodyIntact(msg) };
 }
 
+// ── Template sends (outside the 24h window) ──────────────────────────────────
+//
+// Configuration lives in env because the template NAME and LANGUAGE must match a
+// template that was approved in Meta WhatsApp Manager for this WABA — approval is a
+// manual Meta process the code cannot perform. Until the clinic's template is approved
+// and its name set here, sendTemplate() refuses with BLOCKED_TEMPLATE_NOT_CONFIGURED:
+// the send path is implemented, the template simply is not registered yet.
+//
+//   TEMPLATE_NAME_FOLLOWUP=welcaria_followup      (exact name as approved in Meta)
+//   TEMPLATE_LANG_FOLLOWUP=tr                     (Meta language code; default "tr")
+
+export function getFollowupTemplateName(): string {
+  return process.env.TEMPLATE_NAME_FOLLOWUP?.trim() ?? "";
+}
+
+export function getFollowupTemplateLanguage(): string {
+  const raw = process.env.TEMPLATE_LANG_FOLLOWUP?.trim();
+  return raw && raw.length > 0 ? raw : "tr";
+}
+
+export interface TemplateSendOptions {
+  /** Fills the approved template's {{1}}, {{2}}, … IN ORDER. Count must match exactly. */
+  bodyParams?: string[];
+  tenantId?: string;
+  /** Conversation-state key for the thread; defaults to `to`. */
+  threadKey?: string;
+  /** Injectable clock/sleep for deterministic tests — same contract as OutboundDeps. */
+  now?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /** Injectable transport for tests, so no test can reach the real Meta API. */
+  transport?: (
+    to: string,
+    templateName: string,
+    languageCode: string,
+    bodyParams: string[]
+  ) => Promise<void>;
+}
+
 /**
- * Pre-approved template sends — the ONLY thing Meta permits outside the 24h
- * window. No templates are approved yet, so this path always refuses.
+ * Pre-approved template send — the ONLY message Meta permits once the 24h
+ * customer-service window has closed.
  *
- * TODO(templates): once templates are approved in 360dialog, implement the
- * Cloud API `type: "template"` payload here, still behind complianceGate()
- * (circuit breaker + rate limits apply; the window check does not).
+ * Still fully gated. complianceGate() runs with kind "template", which skips ONLY the
+ * window check; the circuit breaker and — critically — the inbound-only guarantee both
+ * still apply, so a template can never be used to cold-message someone who never wrote
+ * to the clinic.
+ *
+ * Refuses with BLOCKED_TEMPLATE_NOT_CONFIGURED when TEMPLATE_NAME_FOLLOWUP is unset.
+ * That is a configuration state, not a compliance failure: the caller should treat it as
+ * "the clinic has no approved template yet" and leave the thread alone.
+ *
+ * Callers are responsible for not sending the same template to the same thread twice —
+ * the per-inbound cap does not apply here (see complianceGate step 4).
  */
 export async function sendTemplate(
-  templateName: string,
-  _params: Record<string, string>,
-  tenantId: string = getDefaultTenantId()
+  to: string,
+  templateName: string = getFollowupTemplateName(),
+  options: TemplateSendOptions = {}
 ): Promise<OutboundResult> {
-  await logCompliance({
-    ts: new Date().toISOString(),
-    event: "BLOCKED_WINDOW_CLOSED",
+  const tenantId = options.tenantId ?? getDefaultTenantId();
+  const thread = options.threadKey ?? to;
+
+  if (!templateName) {
+    await logCompliance({
+      ts: new Date().toISOString(),
+      event: "BLOCKED_TEMPLATE_NOT_CONFIGURED",
+      tenantId,
+      thread,
+      kind: "template",
+      channel: "meta",
+      detail:
+        "template send refused — TEMPLATE_NAME_FOLLOWUP is not set (no approved Meta template configured for this clinic)",
+    });
+    return { sent: false, decision: "BLOCKED_TEMPLATE_NOT_CONFIGURED", bodyIntact: false };
+  }
+
+  const gate = await complianceGate({
     tenantId,
-    detail: `template send refused — no approved templates configured (requested: ${templateName})`,
+    thread,
+    kind: "template",
+    channel: "meta",
+    now: options.now,
+    sleep: options.sleep,
   });
-  return { sent: false, decision: "BLOCKED_WINDOW_CLOSED", bodyIntact: false };
+  if (!gate.allowed) {
+    return { sent: false, decision: gate.decision, bodyIntact: false };
+  }
+
+  const language = getFollowupTemplateLanguage();
+  const transport = options.transport ?? sendWhatsAppTemplate;
+  try {
+    await transport(to, templateName, language, options.bodyParams ?? []);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Outbound] template send failed (${templateName}/${language}):`, message);
+    return { sent: false, decision: gate.decision, error: message, bodyIntact: false };
+  }
+
+  await recordActivity(tenantId);
+  // The body is Meta's approved template text, rendered by Meta — there is no local
+  // body to compare, so this is not the "transmitted verbatim" claim that bodyIntact
+  // makes for free-form sends. Reported false so no caller mistakes a template for a
+  // delivered KVKK disclosure.
+  return { sent: true, decision: gate.decision, bodyIntact: false };
 }

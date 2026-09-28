@@ -16,6 +16,11 @@ process.env.COMPLIANCE_TENANT_RATE_PER_SECOND = "1000";
 delete process.env.UPSTASH_REDIS_REST_URL;
 delete process.env.UPSTASH_REDIS_REST_TOKEN;
 delete process.env.COMPLIANCE_FORCE_CIRCUIT_OPEN;
+// Template tests must never reach the real Meta API: with no token the transport
+// throws before any fetch, which is exactly the boundary we want to test up to.
+delete process.env.META_WHATSAPP_TOKEN;
+delete process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.TEMPLATE_NAME_FOLLOWUP;
 
 import {
   windowStatus,
@@ -340,11 +345,88 @@ async function main() {
     );
   }
 
-  // ── 11. Template path stub ──────────────────────────────────────────────────
-  console.log("\n11. Template send stub");
+  // ── 11. Template path ───────────────────────────────────────────────────────
+  console.log("\n11. Template send");
+  await _resetComplianceForTest();
   {
-    const tmpl = await sendTemplate("appointment_reminder", { name: "Ayşe" }, "t-tmpl");
-    assertTrue("no approved templates → template send refused", !tmpl.sent);
+    // 11a. No template name configured → refused as a CONFIG state, not a compliance one.
+    const unconfigured = await sendTemplate("+905551110011", "", { tenantId: "t-tmpl" });
+    assertTrue("no template name configured → refused", !unconfigured.sent);
+    assertEqual(
+      "unconfigured template reports the config decision",
+      unconfigured.decision,
+      "BLOCKED_TEMPLATE_NOT_CONFIGURED"
+    );
+
+    // 11b. Inbound-only guarantee still applies to templates. A thread that never
+    //      wrote to us can NOT be reached with a template.
+    const noHistory = await sendTemplate("+905551110022", "welcaria_followup", {
+      tenantId: "t-tmpl",
+    });
+    assertTrue("template to a thread with no inbound history → refused", !noHistory.sent);
+    assertEqual(
+      "template still obeys the inbound-only guarantee",
+      noHistory.decision,
+      "BLOCKED_NO_INBOUND_HISTORY"
+    );
+
+    // 11c. Window CLOSED + real inbound history → the gate ALLOWS the template
+    //      (this is the whole point of templates), while a free-form send on the very
+    //      same thread stays blocked. Transport is stubbed: no test reaches Meta.
+    const thread = "+905551110033";
+    const tmplCalls: Array<{ name: string; lang: string; params: string[] }> = [];
+    const tmplTransport = async (
+      _to: string,
+      name: string,
+      lang: string,
+      params: string[]
+    ): Promise<void> => {
+      tmplCalls.push({ name, lang, params });
+    };
+
+    await recordInboundMessage(thread, "t-tmpl", NOW - 48 * HOUR);
+    const freeform = await sendOutbound(
+      {
+        to: thread,
+        body: "free-form outside the window",
+        kind: "bot_reply",
+        channel: "meta",
+        tenantId: "t-tmpl",
+      },
+      { now: NOW, transport: async () => {}, sleep: async () => {} }
+    );
+    assertEqual(
+      "free-form send outside the window is still blocked",
+      freeform.decision,
+      "BLOCKED_WINDOW_CLOSED"
+    );
+
+    const tmpl = await sendTemplate(thread, "welcaria_followup", {
+      tenantId: "t-tmpl",
+      bodyParams: ["Aurea"],
+      now: NOW,
+      sleep: async () => {},
+      transport: tmplTransport,
+    });
+    assertEqual("template passes the closed window", tmpl.decision, "ALLOWED");
+    assertTrue("template sent through the closed window", tmpl.sent);
+    assertTrue("template transport was invoked exactly once", tmplCalls.length === 1);
+    assertEqual("template name reached the transport", tmplCalls[0]?.name, "welcaria_followup");
+    assertEqual("template language defaults to tr", tmplCalls[0]?.lang, "tr");
+    assertEqual("template body params passed through", tmplCalls[0]?.params.join(","), "Aurea");
+    assertTrue("template never claims bodyIntact", !tmpl.bodyIntact);
+
+    // 11d. Circuit breaker outranks templates.
+    await setManualBreaker("t-tmpl", true);
+    const breakered = await sendTemplate(thread, "welcaria_followup", {
+      tenantId: "t-tmpl",
+      now: NOW,
+      sleep: async () => {},
+      transport: tmplTransport,
+    });
+    assertEqual("circuit breaker blocks templates too", breakered.decision, "CIRCUIT_OPEN");
+    assertTrue("circuit-open template never reached the transport", tmplCalls.length === 1);
+    await setManualBreaker("t-tmpl", false);
   }
 
   // ── 12. Inactivity nudge (day-10 keepalive) ─────────────────────────────────

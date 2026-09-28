@@ -395,6 +395,41 @@ export function isInstagramInquiry(message: string): boolean {
   return INSTAGRAM_INQUIRY_RE.test(message);
 }
 
+// Working-hours questions: "kaçta açıksınız", "hangi günler açıksınız", "çalışma
+// saatleriniz", "pazar açık mısınız", "what time do you open", "opening hours".
+//
+// Every pattern requires an OPEN/CLOSE/WORK word next to the time or day word. A bare
+// time or day ("saat 14:00 uygun", "cumartesi gelebilir miyim") is the patient GIVING a
+// preference and must not match — that is preferredDate/preferredTime territory.
+const HOURS_INQUIRY_PATTERNS: RegExp[] = [
+  // Turkish
+  /(?:çalışma|mesai|açılış|kapanış)\s*saat/i,
+  /saat(?:leriniz|leri)\s*(?:ne(?:dir)?|kaç)/i,
+  /\bka[çc]ta\s*(?:a[çc][ıi]l|a[çc][ıi]k|kapan)/i,
+  /\bka[çc]a\s*kadar\s*(?:a[çc][ıi]k|[çc]al[ıi][şs])/i,
+  /\bne\s*zaman\s*(?:a[çc][ıi]k|a[çc][ıi]l[ıi]yor|kapan)/i,
+  /\bhangi\s*(?:g[üu]n|saat)[a-zçğışöü]*\s*(?:a[çc][ıi]k|[çc]al[ıi][şs]|hizmet)/i,
+  /\b(?:hafta\s*sonu|cumartesi|pazar|pazartesi)\s*(?:g[üu]n[üu]\s*)?(?:a[çc][ıi]k|[çc]al[ıi][şs]|hizmet)/i,
+  /\ba[çc][ıi]k\s*m[ıi]s[ıi]n[ıi]z\b/i,
+  // English
+  /\b(?:opening|working|business|office)\s*hours?\b/i,
+  /\bwhat\s*time\s*(?:do|are|does)\b[^?]{0,20}\b(?:open|close)\b/i,
+  /\bwhen\s*(?:do|are)\s*you\s*(?:open|closed?)\b/i,
+  /\bare\s*you\s*open\b/i,
+  /\bwhat\s*days?\s*(?:do|are)\s*you\s*(?:open|work)/i,
+  /\bopen\s*on\s*(?:sunday|saturday|weekends?)/i,
+  // German / French / Spanish / Russian / Arabic
+  /öffnungszeiten|geöffnet|wann\s*(?:haben|sind)\s*sie\s*(?:ge[öo]ffnet|offen)/i,
+  /horaires?\s*d(?:'|e\s*l')ouverture|heures?\s*d'ouverture|[êe]tes[- ]vous\s*ouvert|ouvert\s*le\s/i,
+  /horario\s*(?:de\s*(?:atenci[oó]n|apertura))?|est[aá]n?\s*abiertos?|a\s*qu[eé]\s*hora\s*(?:abren|cierran)/i,
+  /часы\s*работы|график\s*работы|когда\s*(?:вы\s*)?(?:работаете|открыты)/i,
+  /ساعات\s*العمل|مواعيد\s*العمل|متى\s*تفتح/i,
+];
+
+export function isHoursInquiry(message: string): boolean {
+  return HOURS_INQUIRY_PATTERNS.some((p) => p.test(message));
+}
+
 // Explicit "I want a treatment / when can I come / appointment planning" phrasing.
 const WANT_TREATMENT_RE =
   /randevu|yaptırmak\s+istiyorum|istiyorum|gelmek\s+ist|ne\s+zaman\s+gelebilirim|planl[ıi]yorum|appointment|\bbook(?:ing)?\b|i\s+(?:want|would\s+like|need)\b|when\s+can\s+i\s+(?:come|visit)|planning\s+to\b|termin|rendez-vous|\bcita\b|запис|موعد/i;
@@ -403,10 +438,14 @@ const WANT_TREATMENT_RE =
  * Strong treatment/appointment intent signals: any of these means the qualification
  * flow proceeds normally on this turn.
  */
-function hasTreatmentIntent(message: string, slots: ExtractedSlots): boolean {
+function hasTreatmentIntent(
+  message: string,
+  slots: ExtractedSlots,
+  opts?: { ignoreAvailability?: boolean }
+): boolean {
   return !!(
     slots.priceInquired ||
-    slots.availabilityInquiry ||
+    (!opts?.ignoreAvailability && slots.availabilityInquiry) ||
     slots.preferredDate ||
     slots.preferredTime ||
     slots.firstTimeLaser !== undefined ||
@@ -437,6 +476,15 @@ export function isInformationalOnlyMessage(
   slots: ExtractedSlots,
   state: { serviceCategory?: ServiceCategory; stage?: string }
 ): boolean {
+  // A working-hours question is informational even when its phrasing also trips the
+  // availability patterns ("açık mısınız", "çalışıyor musunuz") — the patient is asking
+  // WHEN the clinic is open, not booking a slot. Any OTHER intent signal (price, a
+  // date/time, wanting a treatment, a qualification answer) still wins, so
+  // "Cumartesi açık mısınız, randevu alabilir miyim?" stays a qualification turn.
+  if (isHoursInquiry(message) && !hasTreatmentIntent(message, slots, { ignoreAvailability: true })) {
+    return true;
+  }
+
   if (hasTreatmentIntent(message, slots)) return false;
 
   if (

@@ -28,6 +28,7 @@ export type ComplianceDecision =
   | "ALLOWED"
   | "BLOCKED_WINDOW_CLOSED"
   | "BLOCKED_NO_INBOUND_HISTORY"
+  | "BLOCKED_TEMPLATE_NOT_CONFIGURED"
   | "RATE_LIMITED"
   | "CIRCUIT_OPEN";
 
@@ -37,7 +38,17 @@ export type ComplianceEvent =
   | "QUALITY_STATE_CHANGE"
   | "INACTIVITY_NUDGE";
 
-export type OutboundKind = "bot_reply" | "booking_handoff" | "system" | "test";
+/**
+ * "template" is a pre-approved Meta template send — the ONLY message type Meta permits
+ * once the 24h customer-service window has closed. It is gated differently from the
+ * free-form kinds: see complianceGate().
+ */
+export type OutboundKind =
+  | "bot_reply"
+  | "booking_handoff"
+  | "system"
+  | "template"
+  | "test";
 
 /** Gate-level channel. "sms" skips WhatsApp-only rules (window, inbound-only, breaker). */
 export type GateChannel = "meta" | "twilio_whatsapp" | "sms";
@@ -571,12 +582,15 @@ export async function complianceGate(params: GateParams): Promise<GateResult> {
       return { allowed: false, decision: "BLOCKED_NO_INBOUND_HISTORY" };
     }
 
-    // 3. 24h customer-service window: closed → only approved templates may go
-    //    out, and none exist yet (see sendTemplate stub) → block.
-    if (status === "closed") {
+    // 3. 24h customer-service window: closed → free-form sends are forbidden. An
+    //    approved TEMPLATE is the one thing Meta still permits here, so kind
+    //    "template" skips this check — and only this check. The circuit breaker
+    //    above and the inbound-only guarantee at step 2 still applied, which is
+    //    what keeps "template" from becoming a way to cold-message a stranger.
+    if (status === "closed" && kind !== "template") {
       await log(
         "BLOCKED_WINDOW_CLOSED",
-        "outside 24h customer service window — free-form sends forbidden, no approved templates configured"
+        "outside 24h customer service window — free-form sends forbidden, use an approved template"
       );
       return { allowed: false, decision: "BLOCKED_WINDOW_CLOSED" };
     }
@@ -588,12 +602,17 @@ export async function complianceGate(params: GateParams): Promise<GateResult> {
   //    missed-call texts) — they are NOT part of the bot's automatic send
   //    budget, so they bypass the per-inbound total cap. The 24h window, the
   //    inbound-only guarantee, and the circuit breaker above still apply.
+  //    `template` bypasses it for a different reason: it is sent precisely when
+  //    the window has CLOSED, so totalSinceInbound still holds the counters from
+  //    the last inbound burst and would reject every template. Template spam is
+  //    prevented at the trigger instead — one template per thread, enforced by
+  //    the caller's state flag (see sendTemplate in lib/outboundSend.ts).
   const meta = await getThreadSendMeta(thread);
   if (kind === "bot_reply" && meta.botRepliesSinceInbound >= 1) {
     await log("RATE_LIMITED", "max 1 bot reply per inbound patient message");
     return { allowed: false, decision: "RATE_LIMITED" };
   }
-  if (kind !== "system" && meta.totalSinceInbound >= getMaxSendsPerInbound()) {
+  if (kind !== "system" && kind !== "template" && meta.totalSinceInbound >= getMaxSendsPerInbound()) {
     await log(
       "RATE_LIMITED",
       `per-inbound send cap reached (${getMaxSendsPerInbound()})`

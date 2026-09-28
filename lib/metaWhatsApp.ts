@@ -20,7 +20,13 @@ export class MetaWhatsAppError extends Error {
   }
 }
 
-export async function sendWhatsAppText(to: string, body: string): Promise<void> {
+// Shared Cloud API plumbing for both message types. `payload` is everything after
+// messaging_product/to — i.e. the type-specific part of the body.
+async function postMessage(
+  to: string,
+  payload: Record<string, unknown>,
+  logLabel: string
+): Promise<void> {
   const token = process.env.META_WHATSAPP_TOKEN;
   const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
   const version = process.env.META_GRAPH_API_VERSION ?? "v21.0";
@@ -42,8 +48,7 @@ export async function sendWhatsAppText(to: string, body: string): Promise<void> 
     body: JSON.stringify({
       messaging_product: "whatsapp",
       to,
-      type: "text",
-      text: { body },
+      ...payload,
     }),
   });
 
@@ -56,11 +61,64 @@ export async function sendWhatsAppText(to: string, body: string): Promise<void> 
       // ignore parse failure
     }
     console.error(
-      `[MetaWhatsApp] Send failed: ${response.status} code=${metaError?.code ?? "?"} type=${metaError?.type ?? "?"} msg=${metaError?.message ?? "(unknown)"}`
+      `[MetaWhatsApp] ${logLabel} send failed: ${response.status} code=${metaError?.code ?? "?"} type=${metaError?.type ?? "?"} msg=${metaError?.message ?? "(unknown)"}`
     );
     throw new MetaWhatsAppError(response.status, metaError);
   }
 
   const data = await response.json().catch(() => null) as { messages?: Array<{ id: string }> } | null;
-  console.log(`[MetaWhatsApp] Sent to=${maskPhone(to)} messageId=${data?.messages?.[0]?.id ?? "(unknown)"}`);
+  console.log(
+    `[MetaWhatsApp] ${logLabel} sent to=${maskPhone(to)} messageId=${data?.messages?.[0]?.id ?? "(unknown)"}`
+  );
+}
+
+/** Free-form text message. Only valid INSIDE the 24h customer-service window. */
+export async function sendWhatsAppText(to: string, body: string): Promise<void> {
+  return postMessage(to, { type: "text", text: { body } }, "text");
+}
+
+/**
+ * Pre-approved template message — the only thing Meta accepts once the 24h window
+ * has closed.
+ *
+ * `templateName` and `languageCode` must match a template that is APPROVED in the
+ * Meta WhatsApp Manager for this WABA. Meta rejects an unknown name (error 132001)
+ * or a language that the approved template does not have (132000/132001), so a
+ * typo here surfaces as a MetaWhatsAppError rather than a silent no-op.
+ *
+ * `bodyParams` fills the template's {{1}}, {{2}}, … placeholders IN ORDER. The count
+ * must match the approved template exactly — Meta rejects a mismatch with 132000.
+ * Pass [] for a template with no variables.
+ *
+ * NOTE: only body parameters are supported. A template with header/button variables
+ * needs those components added here too.
+ */
+export async function sendWhatsAppTemplate(
+  to: string,
+  templateName: string,
+  languageCode: string,
+  bodyParams: string[] = []
+): Promise<void> {
+  const components =
+    bodyParams.length > 0
+      ? [
+          {
+            type: "body",
+            parameters: bodyParams.map((text) => ({ type: "text", text })),
+          },
+        ]
+      : undefined;
+
+  return postMessage(
+    to,
+    {
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+        ...(components ? { components } : {}),
+      },
+    },
+    `template:${templateName}`
+  );
 }

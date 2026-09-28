@@ -13,6 +13,7 @@ import {
   extractNameFallback,
   detectServiceCategory,
   isInformationalOnlyMessage,
+  isHoursInquiry,
   isInstagramInquiry,
   isTransferInquiry,
   isParkingInquiry,
@@ -23,7 +24,7 @@ import { classifyIntent } from "./classifyIntent";
 import { recordInboundMessage, getDefaultTenantId } from "./compliance";
 import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
-import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
+import { clinicConfig, getStartingPriceFor, getWorkingHours } from "./clinicConfig";
 import {
   fallbackText,
   firstTimeQuestionText,
@@ -38,6 +39,7 @@ import {
   treatmentAreaLabel,
   consentDisclosure,
   consentWelcome,
+  workingHoursReply,
 } from "./localization";
 
 // Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
@@ -99,7 +101,8 @@ function buildQualificationFallbackReply(state: ConversationState): string {
 // (inserted verbatim) with the surrounding sentence in the conversation language.
 // Branch selection uses THIS message's slots (not the sticky state flags, which persist
 // from earlier turns). Order matters: channel question first, then transfer/parking
-// (more specific than the generic location patterns), then device, preparation, location.
+// (more specific than the generic location patterns), then device, preparation, hours,
+// location.
 function buildInformationalFallbackReply(
   input: string,
   slots: ExtractedSlots,
@@ -127,6 +130,9 @@ function buildInformationalFallbackReply(
       : "";
     return preTreatmentReply(note || undefined, lang);
   }
+  // Before the location branch on purpose: an hours question ("hangi günler açıksınız")
+  // must never be answered with the address.
+  if (isHoursInquiry(input)) return workingHoursReply(getWorkingHours(), lang);
   if (isLocationInquiry(input)) {
     return locationReply(
       { address: loc.address, googleMapsLink: loc.googleMapsLink, nearestTransport: loc.nearestTransport },
@@ -434,6 +440,9 @@ export async function processInboundMessage(
         assistantReply = await generateSmsReply(input, stateUpdated, {
           informationalTurn: informationalOnly && !postCompletion,
           postCompletion,
+          // Deterministic: the pipeline decides this is an hours question, so the
+          // configured hours (or the safe deferral) are guaranteed to reach the reply.
+          hoursTurn: isHoursInquiry(input),
         });
         // The configured starting price is an opaque literal: if the model localized its
         // punctuation or currency token ("₺2.500" → "₺2,500" / "2.500 TL" / "TRY 2,500"),

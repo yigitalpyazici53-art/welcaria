@@ -1,5 +1,10 @@
 {
   "compilerOptions": {
+    // Kept in sync with tsconfig.json. Without an explicit target TypeScript falls back
+    // to ES5, which downlevels async functions and then rejects a `ReturnType<typeof f>`
+    // return annotation with TS1055 ("not a Promise-compatible constructor value").
+    // ES2015+ emits native async and lifts that restriction.
+    "target": "ES2017",
     "lib": ["esnext"],
     "allowJs": true,
     "skipLibCheck": true,

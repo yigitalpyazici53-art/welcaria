@@ -20,6 +20,11 @@ export const clinicConfig = {
   },
   // Device/technology brands shown when patient asks. Comma-separated list.
   deviceBrands: process.env.CLINIC_DEVICE_BRANDS ?? "",
+  // Working hours, free-form clinic-approved text (e.g. "Pazartesi-Cumartesi 09:00-19:00,
+  // Pazar kapalı"). Deliberately has NO fallback string: when it is empty the bot must say
+  // the team will confirm the hours, never guess a schedule. Read at call time via
+  // getWorkingHours() — see the note on getBookingUrl() below.
+  workingHours: process.env.CLINIC_HOURS ?? "",
   // Location and transportation — shared when patient asks for directions.
   locationInfo: {
     address:          process.env.CLINIC_ADDRESS           ?? "",
@@ -51,6 +56,17 @@ export const clinicConfig = {
 // configured. Trimmed so stray whitespace never makes the guard truthy-but-broken.
 export function getBookingUrl(): string {
   return process.env.CLINIC_BOOKING_URL?.trim() ?? "";
+}
+
+/**
+ * Runtime accessor for the clinic's working hours. Same reasoning as getBookingUrl():
+ * reads process.env at CALL time, so a value that was not present when this module was
+ * first evaluated still reaches the prompt. Returns "" when unset — and "" is a
+ * meaningful value here: it switches the bot to the "team will confirm the hours"
+ * response instead of inventing a schedule.
+ */
+export function getWorkingHours(): string {
+  return process.env.CLINIC_HOURS?.trim() ?? "";
 }
 
 // Maps a conversation service category to that vertical's configured starting price.

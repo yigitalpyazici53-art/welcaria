@@ -228,6 +228,7 @@ export type FallbackKind =
   | "deviceFallback"
   | "preTreatmentFallback"
   | "transferFallback"
+  | "hoursFallback"
   | "instagramRedirect"
   | "postCompletionAck";
 
@@ -369,6 +370,17 @@ const FALLBACKS: Record<FallbackKind, Record<SupportedLanguage, string>> = {
     russian: "Наша команда сообщит детали трансфера из аэропорта.",
     french:  "Notre équipe vous donnera les détails du transfert aéroport.",
     spanish: "Nuestro equipo le dará los detalles del traslado desde el aeropuerto.",
+  },
+  // No clinic hours configured. The bot must NEVER guess a schedule — this is the
+  // safe deferral it uses instead.
+  hoursFallback: {
+    turkish: "Çalışma saatlerimiz için sizi en kısa sürede bilgilendireceğiz.",
+    english: "Our team will confirm our working hours for you shortly.",
+    german:  "Unser Team teilt Ihnen unsere Öffnungszeiten in Kürze mit.",
+    arabic:  "سيؤكد لكم فريقنا مواعيد العمل في أقرب وقت.",
+    russian: "Наша команда в ближайшее время сообщит вам часы работы.",
+    french:  "Notre équipe vous communiquera nos horaires dans les plus brefs délais.",
+    spanish: "Nuestro equipo le confirmará nuestro horario a la brevedad.",
   },
   instagramRedirect: {
     turkish: "En hızlı yanıt için bize buradan, WhatsApp üzerinden ulaşabilirsiniz. Ekibimiz yardımcı olmaktan memnuniyet duyar.",
@@ -598,4 +610,30 @@ export function preTreatmentReply(configuredNote: string | undefined, language?:
 export function transferReply(configuredNote: string | undefined, language?: string): string {
   if (configuredNote && configuredNote.trim()) return configuredNote.trim();
   return fallbackText("transferFallback", resolveLanguage(language));
+}
+
+const HOURS_INTRO: Record<SupportedLanguage, string> = {
+  turkish: "Çalışma saatlerimiz: {value}.",
+  english: "Our working hours: {value}.",
+  german:  "Unsere Öffnungszeiten: {value}.",
+  arabic:  "مواعيد عملنا: {value}.",
+  russian: "Часы работы: {value}.",
+  french:  "Nos horaires d'ouverture : {value}.",
+  spanish: "Nuestro horario: {value}.",
+};
+
+/**
+ * Working-hours reply. The configured string is clinic-approved text and is inserted
+ * VERBATIM (same contract as deviceBrandsReply / locationReply) — day and time names are
+ * never translated, because a mistranslated schedule is worse than an untranslated one.
+ * Nothing configured → the localized deferral, never an invented schedule.
+ */
+export function workingHoursReply(configuredHours: string | undefined, language?: string): string {
+  const lang = resolveLanguage(language);
+  const hours = configuredHours?.trim();
+  if (!hours) return fallbackText("hoursFallback", lang);
+  const filled = HOURS_INTRO[lang].replace("{value}", hours);
+  // The template supplies the closing period; drop it when the configured text
+  // already ended a sentence, so no clinic gets "... Pazar kapalı..".
+  return /[.!?؟]\.$/.test(filled) ? filled.slice(0, -1) : filled;
 }
