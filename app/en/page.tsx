@@ -1268,10 +1268,10 @@ export default function EnPage() {
         </div>
       </section>
 
-      {/* Pricing */}
+      {/* Pricing section removed */}
       <section
-        id="pricing"
-        style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}
+        id="pricing-removed"
+        style={{ display: "none" }}
       >
         <div
           style={{ maxWidth: "1060px", margin: "0 auto", padding: "5rem 2.5rem" }}

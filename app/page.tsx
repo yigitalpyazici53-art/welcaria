@@ -1033,35 +1033,6 @@ export default function Home() {
 
       <hr className="div-line" />
 
-      {/* Pricing */}
-      <section className="sec">
-        <div className="wrap">
-          <div className="sec-label sec-label-center">{t.prTag}</div>
-          <h2 className="sec-title sec-title-center">{t.prTitle}</h2>
-          <div className="price-card">
-            <div className="price-top">
-              <span className="plan-label">{t.planN}</span>
-              <span className="trial">{t.trialB}</span>
-            </div>
-            <div className="price-num">
-              <span className="price-big">$300</span>
-              <span className="price-per">{t.pricePer}</span>
-            </div>
-            <div className="feat-list">
-              {t.feats.map((f, i) => (
-                <div className="feat" key={i}>
-                  <CheckIcon />
-                  <span>{f}</span>
-                </div>
-              ))}
-            </div>
-            <a href={WA_LINK} className="btn-full">
-              {t.prCta}
-            </a>
-          </div>
-        </div>
-      </section>
-
       {/* Footer */}
       <footer className="foot">
         <div className="wrap foot-inner">
