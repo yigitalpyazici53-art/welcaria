@@ -14,6 +14,7 @@ import {
   MetaWhatsAppError,
   sendWhatsAppText,
   sendWhatsAppTemplate,
+  TenantCredentials,
 } from "./metaWhatsApp";
 import { sendSms } from "./twilio";
 import { sanitizeSmsText } from "./sanitize";
@@ -44,6 +45,8 @@ export interface OutboundMessage {
   tenantId?: string;
   /** Conversation-state key for the thread; defaults to `to`. */
   threadKey?: string;
+  /** Per-tenant WABA credentials. When set, overrides env-var defaults. */
+  tenantCreds?: TenantCredentials;
 }
 
 export interface OutboundResult {
@@ -105,7 +108,9 @@ export async function sendOutbound(
   }
 
   const transport =
-    deps.transport ?? (msg.channel === "meta" ? sendWhatsAppText : sendSms);
+    deps.transport ?? (msg.channel === "meta"
+      ? (to: string, body: string) => sendWhatsAppText(to, body, msg.tenantCreds)
+      : sendSms);
   try {
     await transport(msg.to, msg.body);
   } catch (err) {

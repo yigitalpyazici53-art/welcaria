@@ -13,6 +13,8 @@ import { handleBookingHandoff } from "@/lib/bookingHandoff";
 import { isDuplicateMessage } from "@/lib/messageDedup";
 import { maskPhone } from "@/lib/sanitize";
 import { envOrUndefined } from "@/lib/env";
+import { getTenantByPhoneNumberId } from "@/lib/tenants";
+import type { TenantCredentials } from "@/lib/metaWhatsApp";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -213,6 +215,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         const tenantId = value.metadata?.phone_number_id;
 
+        // Multi-tenant: resolve WABA credentials for this phone number
+        let tenantCreds: TenantCredentials | undefined;
+        if (tenantId) {
+          const tenant = await getTenantByPhoneNumberId(tenantId);
+          if (tenant?.access_token) {
+            tenantCreds = {
+              token: tenant.access_token,
+              phoneNumberId: tenant.phone_number_id!,
+            };
+          }
+        }
+
         try {
           const result = await processInboundMessage({
             from,
@@ -242,6 +256,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               channel: "meta",
               tenantId,
               threadKey: from,
+              tenantCreds,
             });
             // Fail-closed on partial delivery. The Cloud API carries the body
             // verbatim, so bodyIntact is true here for every successful send; the
@@ -285,6 +300,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               channel: "meta",
               tenantId,
               threadKey: from,
+              tenantCreds,
             });
             console.log(
               `[WhatsApp Webhook] reply sent=${replyResult.sent} decision=${replyResult.decision}`
@@ -307,6 +323,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
                   channel: "meta",
                   tenantId,
                   threadKey: from,
+                  tenantCreds,
                 });
                 if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
               },

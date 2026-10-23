@@ -32,15 +32,25 @@ export class MetaNotConfiguredError extends Error {
   }
 }
 
+/**
+ * Optional per-tenant credentials. When provided, these override the env-var
+ * defaults — enabling multi-tenant message sending without restarting.
+ */
+export interface TenantCredentials {
+  token: string;
+  phoneNumberId: string;
+}
+
 // Shared Cloud API plumbing for both message types. `payload` is everything after
 // messaging_product/to — i.e. the type-specific part of the body.
 async function postMessage(
   to: string,
   payload: Record<string, unknown>,
-  logLabel: string
+  logLabel: string,
+  tenantCreds?: TenantCredentials
 ): Promise<void> {
-  const token = envOrUndefined("META_WHATSAPP_TOKEN");
-  const phoneNumberId = envOrUndefined("META_WHATSAPP_PHONE_NUMBER_ID");
+  const token = tenantCreds?.token ?? envOrUndefined("META_WHATSAPP_TOKEN");
+  const phoneNumberId = tenantCreds?.phoneNumberId ?? envOrUndefined("META_WHATSAPP_PHONE_NUMBER_ID");
   const version = envOrUndefined("META_GRAPH_API_VERSION") ?? "v21.0";
 
   if (!token || !phoneNumberId) {
@@ -83,8 +93,12 @@ async function postMessage(
 }
 
 /** Free-form text message. Only valid INSIDE the 24h customer-service window. */
-export async function sendWhatsAppText(to: string, body: string): Promise<void> {
-  return postMessage(to, { type: "text", text: { body } }, "text");
+export async function sendWhatsAppText(
+  to: string,
+  body: string,
+  tenantCreds?: TenantCredentials
+): Promise<void> {
+  return postMessage(to, { type: "text", text: { body } }, "text", tenantCreds);
 }
 
 /**
@@ -107,7 +121,8 @@ export async function sendWhatsAppTemplate(
   to: string,
   templateName: string,
   languageCode: string,
-  bodyParams: string[] = []
+  bodyParams: string[] = [],
+  tenantCreds?: TenantCredentials
 ): Promise<void> {
   const components =
     bodyParams.length > 0
@@ -129,6 +144,7 @@ export async function sendWhatsAppTemplate(
         ...(components ? { components } : {}),
       },
     },
-    `template:${templateName}`
+    `template:${templateName}`,
+    tenantCreds
   );
 }
