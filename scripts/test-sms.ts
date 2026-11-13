@@ -818,7 +818,7 @@ async function testCompleteStageReply(): Promise<void> {
   assertNotContains("reply does not ask for clinic location", reply, "Which clinic location");
   assertNotContains("reply has no question mark", reply, "?");
   assertContains("reply contains 'appointment request'", reply, "appointment request");
-  assertContains("reply contains customer name", reply, "Zeynep");
+  assertNotContains("reply does not repeat customer name (KVKK)", reply, "Zeynep");
   assertContains("reply contains treatment area", reply, "full body");
   assertNoProhibitedPhrases("complete reply", reply);
   assertSms("complete reply fits SMS limit", reply);
@@ -899,7 +899,7 @@ async function testNameOverwriteProtection(): Promise<void> {
   const r2a = await inbound({ from: phone2, body: "Zeynep, +44 7700 900123" });
   assertEqual("stage=complete after name+phone", r2a.stateAfter.stage, "complete");
   assertEqual("name captured as Zeynep", r2a.stateAfter.name, "Zeynep");
-  assertContains("completion reply addresses Zeynep once", r2a.assistantReply, "Zeynep");
+  assertNotContains("completion reply does not repeat name Zeynep (KVKK)", r2a.assistantReply, "Zeynep");
 
   // Post-completion turns are deterministic on the static path — force it so the test
   // is stable with or without an API key configured.
@@ -917,7 +917,7 @@ async function testNameOverwriteProtection(): Promise<void> {
   // -- Pipeline: explicit Turkish correction still updates a captured name
   const r2c = await inbound({ from: phone2, body: "Adım Zeynep değil, Ayşe." });
   assertEqual("TR correction updates name to Ayşe", r2c.stateAfter.name, "Ayşe");
-  assertContains("reply addresses corrected name Ayşe", r2c.assistantReply, "Ayşe");
+  assertNotContains("reply does not repeat corrected name Ayşe (KVKK)", r2c.assistantReply, "Ayşe");
 
   if (savedKeyPost !== undefined) process.env.ANTHROPIC_API_KEY = savedKeyPost;
 
@@ -944,7 +944,7 @@ async function testNameOverwriteProtection(): Promise<void> {
   const r3 = await inbound({ from: phone3, body: "My name is Sarah, not Zeynep." });
   if (savedKeyPost3 !== undefined) process.env.ANTHROPIC_API_KEY = savedKeyPost3;
   assertEqual("EN correction updates name to Sarah", r3.stateAfter.name, "Sarah");
-  assertContains("reply addresses corrected name Sarah", r3.assistantReply, "Sarah");
+  assertNotContains("reply does not repeat corrected name Sarah (KVKK)", r3.assistantReply, "Sarah");
 }
 
 // ── history logging: user message on every turn ───────────────────────────
@@ -2536,7 +2536,8 @@ async function testMultilingualStaticFallbacks(): Promise<void> {
     const de = await inbound({ from: PH_DE, body: "Anna, +49 151 23456789" });
     assertEqual("DE neutral turn: stage complete", de.stateAfter.stage, "complete");
     assertEqual("DE neutral turn: language stays german", de.stateAfter.detectedLanguage, "german");
-    assertContains("DE completion is German", de.assistantReply, "Vielen Dank Anna");
+    assertContains("DE completion is German", de.assistantReply, "Vielen Dank");
+    assertNotContains("DE completion does not repeat name Anna (KVKK)", de.assistantReply, "Anna");
     assertContains("DE completion uses Terminanfrage", de.assistantReply, "Terminanfrage");
     assertNotContains("DE completion not English", de.assistantReply, "Thank you");
     assertContains("DE booking link is German", formatBookingLinkMessage(LINK, de.stateAfter.detectedLanguage), "Terminanfrage");
@@ -2655,7 +2656,7 @@ async function testCompletedStateBehavior(): Promise<void> {
     const done = await inbound({ from: PH, body: "Zeynep, +44 7700 900123" });
     assertEqual("completion: stage complete", done.stateAfter.stage, "complete");
     assertContains("completion: full message on transition", done.assistantReply, "randevu talebinizi aldık");
-    assertContains("completion: addresses Zeynep", done.assistantReply, "Zeynep");
+    assertNotContains("completion: does not repeat name Zeynep (KVKK)", done.assistantReply, "Zeynep");
 
     // Simulate the webhook route sending the booking link once
     await updateState(PH, { bookingLinkSent: true });
