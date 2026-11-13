@@ -789,7 +789,7 @@ async function main() {
   assertContains("11a: completion reply is Turkish (Teşekkür ederiz)", trc.assistantReply, "Teşekkür ederiz");
   assertContains("11a: completion reply uses Turkish appointment wording", trc.assistantReply, "randevu talebinizi aldık");
   assertContains("11a: completion reply uses Turkish follow-up wording", trc.assistantReply, "iletişime geçecektir");
-  assertContains("11a: completion reply addresses the patient by name", trc.assistantReply, "Zeynep");
+  assertNotContains("11a: completion reply does not repeat the patient name (KVKK)", trc.assistantReply, "Zeynep");
   assertNotContains("11a: completion reply not English (Thank you)", trc.assistantReply, "Thank you");
   assertNotContains("11a: completion reply not English (appointment request)", trc.assistantReply, "appointment request");
   console.log(`  11a reply="${trc.assistantReply}"`);
