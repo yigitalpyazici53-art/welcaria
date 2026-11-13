@@ -69,12 +69,12 @@ export async function computeDailySummary(targetDate: Date): Promise<DailySummar
 }
 
 export function buildEmailSubject(): string {
-  return `RandevuFlow Daily Lead Summary — ${clinicConfig.name}`;
+  return `Welcaria Daily Lead Summary — ${clinicConfig.name}`;
 }
 
 export function buildEmailText(summary: DailySummary): string {
   const lines: string[] = [
-    `Yesterday's RandevuFlow summary for ${clinicConfig.name}:`,
+    `Yesterday's Welcaria summary for ${clinicConfig.name}:`,
     "",
     `Total inquiries:    ${summary.totalInquiries}`,
     `Qualified leads:    ${summary.qualifiedLeads}`,
@@ -126,7 +126,7 @@ ${summary.topLeads
 <html>
 <head><meta charset="utf-8"></head>
 <body style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;padding:24px">
-  <h2 style="color:#2563eb;margin-bottom:4px">RandevuFlow Daily Summary</h2>
+  <h2 style="color:#2563eb;margin-bottom:4px">Welcaria Daily Summary</h2>
   <p style="color:#6b7280;margin-top:0;margin-bottom:16px">${clinicConfig.name} &middot; ${summary.date}</p>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 16px">
   <table style="width:100%;border-collapse:collapse">
@@ -160,7 +160,7 @@ ${summary.topLeads
 export async function sendDailySummary(summary: DailySummary): Promise<void> {
   const apiKey     = envOrUndefined("RESEND_API_KEY");
   const ownerEmail = clinicConfig.ownerEmail;
-  const fromEmail  = envOrUndefined("RESEND_FROM_EMAIL") ?? "RandevuFlow <onboarding@resend.dev>";
+  const fromEmail  = envOrUndefined("RESEND_FROM_EMAIL") ?? "Welcaria <onboarding@resend.dev>";
 
   if (!apiKey)      throw new Error("RESEND_API_KEY is not set");
   if (!ownerEmail)  throw new Error("OWNER_EMAIL is not set");

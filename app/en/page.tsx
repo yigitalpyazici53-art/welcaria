@@ -7,7 +7,7 @@ const outfit = Outfit({
 });
 
 const CONTACT_URL =
-  "mailto:yigitalpyazici53@gmail.com?subject=RandevuFlow%20Pilot%20Application";
+  "mailto:yigitalpyazici53@gmail.com?subject=Welcaria%20Pilot%20Application";
 
 const C = {
   teal: "#0d9488",
@@ -96,11 +96,11 @@ const clinicFeatures = [
 const faqs = [
   {
     q: "Does it replace my staff?",
-    a: "No. RandevuFlow handles the initial response and qualification. Your team reviews every lead and follows up directly — the patient relationship stays with your clinic.",
+    a: "No. Welcaria handles the initial response and qualification. Your team reviews every lead and follows up directly — the patient relationship stays with your clinic.",
   },
   {
     q: "Are appointment requests confirmed bookings?",
-    a: "No. RandevuFlow captures the request and contact details. Your team reviews the qualified lead and confirms the appointment with the patient directly.",
+    a: "No. Welcaria captures the request and contact details. Your team reviews the qualified lead and confirms the appointment with the patient directly.",
   },
   {
     q: "Does it give medical advice?",
@@ -124,7 +124,7 @@ const demoMessages = [
   },
   {
     who: "assistant",
-    name: "RandevuFlow",
+    name: "Welcaria",
     text: "Hi! I can help. Full-body laser pricing can vary depending on the package, sessions, and current offers. Have you had laser hair removal before?",
   },
   {
@@ -134,13 +134,13 @@ const demoMessages = [
   },
   {
     who: "assistant",
-    name: "RandevuFlow",
+    name: "Welcaria",
     text: "Great. I can create an appointment request for Saturday. May I have your name and phone number?",
   },
   { who: "customer", name: "Zeynep", text: "Zeynep, +44 7700 900123" },
   {
     who: "assistant",
-    name: "RandevuFlow",
+    name: "Welcaria",
     text: "Thank you, Zeynep! I've noted your appointment request for Saturday. Our team will be in touch shortly to confirm the details.",
   },
 ];
@@ -391,7 +391,7 @@ export default function EnPage() {
             letterSpacing: "-0.035em",
           }}
         >
-          RandevuFlow
+          Welcaria
         </span>
         <a href={CONTACT_URL} className="nav-cta">
           Apply for pilot
@@ -442,7 +442,7 @@ export default function EnPage() {
                 maxWidth: "520px",
               }}
             >
-              RandevuFlow helps premium clinics respond instantly, qualify each
+              Welcaria helps premium clinics respond instantly, qualify each
               inquiry, log the lead, and alert the team before the patient books
               somewhere else.
             </p>
@@ -787,7 +787,7 @@ export default function EnPage() {
               color: C.text,
             }}
           >
-            How RandevuFlow works
+            How Welcaria works
           </h2>
           <p
             style={{
@@ -809,7 +809,7 @@ export default function EnPage() {
               {
                 n: "02",
                 title: "Lead is qualified automatically",
-                desc: "RandevuFlow gathers treatment interest, first-time status, preferred time, and contact details — without staff involvement.",
+                desc: "Welcaria gathers treatment interest, first-time status, preferred time, and contact details — without staff involvement.",
               },
               {
                 n: "03",
@@ -1146,7 +1146,7 @@ export default function EnPage() {
               maxWidth: "500px",
             }}
           >
-            RandevuFlow doesn&rsquo;t just reply. It captures, scores, and delivers.
+            Welcaria doesn&rsquo;t just reply. It captures, scores, and delivers.
           </p>
           <div className="what-team-grid">
             {[
@@ -1724,7 +1724,7 @@ export default function EnPage() {
             lineHeight: 1.6,
           }}
         >
-          RandevuFlow helps clinics manage the information-gathering and
+          Welcaria helps clinics manage the information-gathering and
           follow-up process after a customer reaches out. It is not designed
           for unsolicited bulk messaging. It does not provide medical advice or
           treatment recommendations.
@@ -1743,7 +1743,7 @@ export default function EnPage() {
         }}
       >
         <div>
-          <strong style={{ color: "#e2e8f0" }}>RandevuFlow</strong> &mdash;
+          <strong style={{ color: "#e2e8f0" }}>Welcaria</strong> &mdash;
           WhatsApp lead response system for premium clinics.
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
